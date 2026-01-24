@@ -2,8 +2,10 @@ import base64
 import io
 from celery import shared_task
 from imagekitio import ImageKit
+from Backend.models import ClerkUserProfile, FileFolderModel, FileModel
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 
-from Backend.models import FileFolderModel, FileModel
 
 @shared_task
 def upload_image_to_imagekit(filename , filebase64 , file_modelID):
@@ -42,7 +44,16 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
             file_instance.size = int(uploaded_image.size / 1024)    #Converting the size of the image into kbs
             file_instance.upload_status = 'UPLOADED'   # Updating the status of the Image
             file_instance.save()
-
+            channel_layer = get_channel_layer()
+            async_to_sync(channel_layer.group_send)(
+                f'file_updates_{file_instance.author}', # connecting the channel to the private group of the respective author of the file.
+                {
+                    "type" : "send_file_update",  # specifies the particular method in the class of the group we mentioned that is to be called to send real time data to the frontend
+                    "file_id" : file_instance.pk,
+                    "status" : file_instance.upload_status,
+                    "file_url" : file_instance.file_url,
+                }
+            )
             return {
                 "status_code" : 5000,
                 "message" : "Image Successfully Uploaded",
