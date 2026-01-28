@@ -25,9 +25,11 @@ clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))
 @database_sync_to_async
 def get_the_clerk_user(user_id: str):
     try:
+        print("collected the user DATABASE RECORD")
         clerk_user = ClerkUserProfile.objects.get(clerk_user_id=user_id)
         return clerk_user
     except ClerkUserProfile.DoesNotExist:
+        print("Clerk user not found in database for user_id:", user_id)
         return AnonymousUser()
 
 
@@ -39,12 +41,11 @@ class ClerkAuthMiddleware:
         query_string = scope.get("query_string", b"").decode("utf-8")
         query_params = dict(qp.split("=") for qp in query_string.split("&") if "=" in qp)
         token = query_params.get("token")
-
+        print(token)
         if token:
             # Simulate an HTTP request to authenticate the token since the web socket scope does not have headers
             headers = {"Authorization": f"Bearer {token}"}
             mock_request = httpx.Request("GET", "http://localhost:3000", headers=headers) 
-
             request_state = clerk_SDK.authenticate_request(
                 mock_request,
                 AuthenticateRequestOptions(
@@ -57,10 +58,14 @@ class ClerkAuthMiddleware:
                 user_id = request_payload['sub']
 
                 scope['user'] = await get_the_clerk_user(user_id)
+                print("User attached to scope:", scope['user'])
+                print(scope)
+                return await self.inner(scope, receive, send)
             else:
                 print("Middleware Authentication Failed")
                 scope['user'] = AnonymousUser()
         else:
+            print("No token provided in WebSocket connection")
             scope['user'] = AnonymousUser()
 
         

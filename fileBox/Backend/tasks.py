@@ -39,6 +39,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
             file_name=filename,
         )
         print("Uploaded the image and waiting to get the result")
+        print(uploaded_image.url)
         if uploaded_image and uploaded_image.url:
             file_instance.file_url = uploaded_image.url
             file_instance.size = int(uploaded_image.size / 1024)    #Converting the size of the image into kbs
@@ -46,7 +47,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
             file_instance.save()
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
-                f'file_updates_{file_instance.author}', # connecting the channel to the private group of the respective author of the file.
+                f'file_updates_{file_instance.author.pk}', # connecting the channel to the private group of the respective author of the file.
                 {
                     "type" : "send_file_update",  # specifies the particular method in the class of the group we mentioned that is to be called to send real time data to the frontend
                     "file_id" : file_instance.pk,

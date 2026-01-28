@@ -87,7 +87,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379, 1)],
+            "hosts": [("127.0.0.1", 6379, 0)],
         },
     },
 }
@@ -117,7 +117,7 @@ DATABASES = {
 }
 
 
-CELERY_BROKER_URL = 'redis://localhost:6379/0'  # Or your Redis URL
+CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'  # Or your Redis URL
 CELERY_RESULT_BACKEND = 'django-db'  # Using Django database as result backend
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
