@@ -1,7 +1,12 @@
 import os
 import base64
 import shutil
+from sqlite3 import Cursor
+from tkinter import NO, TRUE
 
+# importing django cache system 
+from django.core.cache import cache
+from django_redis.cache import RedisCache
 #importing the dotenv packages and rest framework packages 
 from django.conf import settings
 from dotenv import load_dotenv
@@ -13,6 +18,7 @@ from clerk_backend_api import Clerk
 from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 
+
 #packages for imagekit integration
 from imagekitio import ImageKit
 
@@ -21,9 +27,9 @@ from Backend.tasks import upload_image_to_imagekit
 
 from django_smart_ratelimit import rate_limit
 from django_ratelimit.decorators import ratelimit
-from Backend.models import FileFolderModel, FileModel , ClerkUserProfile       # importing the models from the registered app
+from Backend.models import ClerkUserStorage, FileFolderModel , ClerkUserProfile       # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import FileFolderSerializer
+from .serializers import FileFolderSerializer, UserStorageSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 
 
@@ -252,7 +258,7 @@ def createFolder(request):
         user_id = request_payload['sub']
 
         user = ClerkUserProfile.objects.get(clerk_user_id = user_id)  #getting the authenticated author who is creating the folder  
-        folder_name_info = request.query_params.get("folderID")
+        folder_name_info = request.query_params.get("folderID") # parent folder ID
         folder_name = request.data["name"]
 
         print(folder_name_info)
@@ -277,16 +283,24 @@ def createFolder(request):
             parentFolder = folder,
             upload_status = "UPLOADED"
         )
+        
         responce_data = {
                 "status_code" : 5000,
                 "message" : "Fodler Created Successfully",
                 "data" : folder_instance.pk
             }
+
         
+        redis_cache: RedisCache = cache # type: ignore
+        if folder_name_info is None:
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+        else:
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{folder_name_info}*', version=2)
+
         return Response(responce_data)
     else:
         responce_data = {
-            "status_code" : 4001,
+            "status_code" : 4001, 
             "message" : "User not authenticated",
             "data" : ""
         }
@@ -340,7 +354,7 @@ def deleteFolderFile(request):
         return Response(responce_data)
 
 
-@api_view(["PATCH"])
+@api_view(["GET"])
 @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
 @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
         'bucket_size': 200,  # Allow bursts up to 200 requests
@@ -361,10 +375,16 @@ def isTrash(request):
         user_id = request_payload['sub']
 
         user = ClerkUserProfile.objects.get(clerk_user_id = user_id)  #getting the authenticated author who is creating the folder  
-        folder_file_id = int(request.query_params.get("folderFileID"))
+        folder_file_id = int(request.query_params.get("folderFileID"))  #the instance whoose Trash Status has to be updated
+        cursor_key = request.query_params.get("cursor") #Cursor key (for incoperating the pagination with cache.)
+
+        print(cursor_key , 'this is the cursor key...........')
 
         if FileFolderModel.objects.filter(pk=folder_file_id , author = user).exists():
             instance = FileFolderModel.objects.get(pk=folder_file_id, author = user)
+            parent_folder_id = None  if instance.parentFolder == None else instance.parentFolder.pk   #if we are inside a parent folder , if the child is been Trash updated , we need to remove the cache inside that parent Folder not the entire root, for that we need the ID of particular parent.
+            print(parent_folder_id , "parent folder ID for deleting the cache.")
+            print("entered into the trash update function")
             instance.is_trash = False if instance.is_trash else True  # Updating the trash status based on its current state
             instance.save()
 
@@ -372,8 +392,18 @@ def isTrash(request):
                 "status_code" : 5000,
                 "message" : "Fodler/File Updated Successfully",
                 "data" : ""
-            }
-            return Response(responce_data)
+            }   
+            redis_cache: RedisCache = cache # type: ignore
+            redis_cache.delete_pattern(f'*trashed_{user.clerk_user_id}_*', version=2)
+
+            
+            if parent_folder_id:  #clearing the parent folder not the root 
+                redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}_*', version=2)
+                return Response(responce_data)
+            else: #clearing the entire root , since the trash update fileFolder might be a root level Record..
+                redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+                return Response(responce_data)
+
         else:
             responce_data = {
                 "status_code" : 5001,
@@ -390,7 +420,7 @@ def isTrash(request):
         return Response(responce_data)
 
 
-@api_view(["PATCH"])
+@api_view(["GET"])
 @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
 @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
         'bucket_size': 200,  # Allow bursts up to 200 requests
@@ -409,7 +439,7 @@ def isFavorite(request):
         request_payload = request_state.payload
         user_id = request_payload['sub']
 
-        user = ClerkUserProfile.objects.get(clerk_user_id = 'user_353xuTbj5fknTSFSWwNld8bzQdj')  #getting the authenticated author who is creating the folder  
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)  #getting the authenticated author who is creating the folder  
         folder_file_id = int(request.query_params.get("folderFileID"))
 
         if FileFolderModel.objects.filter(pk=folder_file_id , author = user).exists():
@@ -462,7 +492,6 @@ def getAllFileFolders(request):
     if request_state.is_signed_in:
         request_payload = request_state.payload
         user_id = request_payload['sub']
-
         user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
         if not user:
             responce_data = {
@@ -473,6 +502,17 @@ def getAllFileFolders(request):
             return Response(responce_data)
         
         parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
+        pagination_cursor = request.query_params.get("cursor")
+
+        cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
+
+        print('Generated Cache Key', cache_key)
+
+        #looking up in cache for the required data.
+        if cache.has_key(cache_key , version=2):
+            print('Fetching from cache version 2', cache_key)
+            return Response(cache.get(cache_key , version=2))
+        
 
         if parent_folder_id is not None:
             all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id , author = user).order_by('-updated_at')
@@ -496,6 +536,83 @@ def getAllFileFolders(request):
 
         if paginated_instance is not None:
             serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
+            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data).data
+            cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
+            print("setting the cached value")
+            return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data)
+        
+        serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
+        print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
+        responce_data = {
+                "status_code" : 5000,
+                "message" : "Folder Created Successfully",
+                "data" : serialized_files_and_folders.data
+        }
+        
+        cache.set(cache_key, responce_data)
+        return Response(responce_data)
+    else: 
+        print('token has expired or user not authenticated' , request_state , request)
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+
+        return Response(responce_data)
+    
+
+
+@api_view(['GET'])
+def getTrashFileFolders(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        pagination_cursor = request.query_params.get("cursor")
+        cache_key = f'trashed_{user.clerk_user_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
+        print(cache_key)
+        if cache.has_key(cache_key , version=2):
+            print('Fetching from cache version 2(trash Page)', cache_key)
+            return Response(cache.get(cache_key , version=2))
+
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = True  , author = user).order_by('-updated_at')
+
+        if not all_files_folders_instance.exists():
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "No Files/Folders Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        paginated_files_folders = FileFolderCursorBasedPagination()
+        paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
+
+        context = {
+            "request" : request
+        }
+
+        if paginated_instance is not None:
+            serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
+            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data).data
+            cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
+            print("setting the cached value(trash)")
             return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data)
         
         serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
@@ -514,7 +631,70 @@ def getAllFileFolders(request):
         }
 
         return Response(responce_data)
-    
+
+
+@api_view(['GET'])
+def getFavoriteFileFolders(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user , is_favorite = True).order_by('-updated_at')
+
+        if not all_files_folders_instance.exists():
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "No Files/Folders Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        paginated_files_folders = FileFolderCursorBasedPagination()
+        paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
+
+        context = {
+            "request" : request
+        }
+
+        if paginated_instance is not None:
+            serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
+            return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data)
+        
+        serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
+        responce_data = {
+                "status_code" : 5000,
+                "message" : "Folder Updated Successfully",
+                "data" : serialized_files_and_folders.data
+        }
+        
+        return Response(responce_data)
+    else: 
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+
+        return Response(responce_data)
+
+
+
+
 
 @api_view(['GET'])
 def getSingleImage(request):
@@ -569,4 +749,54 @@ def getSingleImage(request):
             "data" : ""
         }
 
+        return Response(responce_data)
+
+@api_view(['GET'])
+def getStorageDetails(request):
+    #API endpoint to get the storage details of the user
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        storage_instance = ClerkUserStorage.objects.get(author = user)
+        if not storage_instance:
+            responce_data = {
+                "status_code" : 5001,
+                "message" : "Storage Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        context = {
+                "request" : request
+            }
+        serialized_storage_data = UserStorageSerializer(storage_instance, context = context)
+        
+        responce_data = {
+            "status_code" : 5000,
+            "message" : "Storage Details Fetched Successfully",
+            "data" : serialized_storage_data.data
+        }
+
+        return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
         return Response(responce_data)

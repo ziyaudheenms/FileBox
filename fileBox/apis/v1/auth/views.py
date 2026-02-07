@@ -8,7 +8,7 @@ from clerk_backend_api import Clerk
 from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 
-from Backend.models import ClerkUserProfile
+from Backend.models import ClerkUserProfile , ClerkUserStorage
 
 load_dotenv()
 
@@ -43,12 +43,20 @@ def create_clerk_user(request):
                 break
         
 
-        ClerkUserProfile.objects.create(
+        instance = ClerkUserProfile.objects.create(
+            
             clerk_user_id = user_id,
             clerk_user_name = username,
             clerk_user_email = email,
-            clerk_user_available_storage_gb = 5,
-            clerk_user_used_storage_gb = 0,
+        )
+
+        ClerkUserStorage.objects.create(
+            author = instance,
+            clerk_user_storage_limit = 5,
+            clerk_user_used_storage = 0,
+            total_image_storage = 0,
+            total_document_storage = 0,
+            total_other_storage = 0
         )
 
         responce_data = {

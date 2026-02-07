@@ -1,11 +1,12 @@
 import base64
 import io
+from turtle import st
 from celery import shared_task
 from imagekitio import ImageKit
-from Backend.models import ClerkUserProfile, FileFolderModel, FileModel
+from Backend.models import ClerkUserProfile, ClerkUserStorage, FileFolderModel
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
-
+from django.db.models import F
 
 @shared_task
 def upload_image_to_imagekit(filename , filebase64 , file_modelID):
@@ -17,7 +18,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
         file_instance.upload_status = 'PROCESSING'  # updating the status
         file_instance.save()
         print("Updated the status of DB Record")
-    except FileModel.DoesNotExist:
+    except FileFolderModel.DoesNotExist:
         return {
                 "status_code" : 5001,
                 "message" : "Data Record Not Found",
@@ -45,6 +46,15 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
             file_instance.size = int(uploaded_image.size / 1024)    #Converting the size of the image into kbs
             file_instance.upload_status = 'UPLOADED'   # Updating the status of the Image
             file_instance.save()
+            # updating the storage stats of the user based on the uploaded file size
+            if ClerkUserStorage.objects.filter(author=file_instance.author).exists():
+                ClerkUserStorage.objects.filter(author=file_instance.author).update(
+                    clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
+                    total_image_storage=F('total_image_storage') + file_instance.size
+                )
+            else:
+                print("Storage instance not found for the user")
+
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
                 f'file_updates_{file_instance.author.pk}', # connecting the channel to the private group of the respective author of the file.
@@ -65,6 +75,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
     except Exception as e:
         print("Sorry ! Some error occured")
         file_instance.upload_status = 'FAILED'
+        file_instance.size = 0
         file_instance.save()
         print("Try Again Later !")
         return {
