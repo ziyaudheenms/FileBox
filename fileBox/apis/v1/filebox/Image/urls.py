@@ -15,6 +15,11 @@ urlpatterns = [
     path('fileFolders/Trash', views.getTrashFileFolders), #api endpoint to get all the trashed files/folders + file/folder pagination along with if it's inside any saperate folder using params.
     path('fileFolders/Favorite', views.getFavoriteFileFolders), #api endpoint to get all the favorite files/folders + file/folder pagination along with if it's inside any saperate folder using params.
     path('fileFolders/Image', views.getSingleImage), #api endpoint to get single image details using pk id sent through params
-    path('storage/status/' , views.getStorageDetails) # this api endpoint is used to get the storage details of the user
+    path('storage/status/' , views.getStorageDetails), # this api endpoint is used to get the storage details of the user
+    path('permission/getUser' , views.get_the_user_for_permission),
+    path('permission/grandUsers' , views.assign_permission_to_user),
+    path('permission/Users' , views.get_User_With_Permission),
+    path('get/sharableLink' , views.generate_share_link),
+    path('get/sharedFileFolder' , views.access_shared_file_folder),
 ]
                             

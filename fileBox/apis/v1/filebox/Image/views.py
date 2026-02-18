@@ -3,10 +3,17 @@ import base64
 import shutil
 from sqlite3 import Cursor
 from tkinter import NO, TRUE
+from attr import has
+from click import File
+from django.db import transaction
+from django.contrib.auth.hashers import make_password, check_password
+from django.db.models import F
 
 # importing django cache system 
 from django.core.cache import cache
+from django.shortcuts import get_object_or_404
 from django_redis.cache import RedisCache
+
 #importing the dotenv packages and rest framework packages 
 from django.conf import settings
 from dotenv import load_dotenv
@@ -14,10 +21,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view
 
 # pakckages for clerk integration
-from clerk_backend_api import Clerk
+from clerk_backend_api import Clerk, Instance
 from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
-
 
 #packages for imagekit integration
 from imagekitio import ImageKit
@@ -25,17 +31,21 @@ from imagekitio import ImageKit
 #importing the queue tasks for Celery to work on with
 from Backend.tasks import upload_image_to_imagekit
 
+#importing the ratelimiting fuctions
 from django_smart_ratelimit import rate_limit
 from django_ratelimit.decorators import ratelimit
-from Backend.models import ClerkUserStorage, FileFolderModel , ClerkUserProfile       # importing the models from the registered app
+
+from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import FileFolderSerializer, UserStorageSerializer
+from .serializers import FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
 
+
+redis_cache: RedisCache = cache # type: ignore
 
 @api_view(['POST'])
 @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
@@ -340,7 +350,7 @@ def deleteFolderFile(request):
             return Response(responce_data)
         else:
             responce_data = {
-                "status_code" : 5001,
+                "status_code" : 5002,
                 "message" : "Fodler Not Found",
                 "data" : ""
             }
@@ -406,7 +416,7 @@ def isTrash(request):
 
         else:
             responce_data = {
-                "status_code" : 5001,
+                "status_code" : 5002,
                 "message" : "Fodler/File Not Found",
                 "data" : ""
             }
@@ -452,10 +462,21 @@ def isFavorite(request):
                 "message" : "Fodler/File Updated Successfully",
                 "data" : ""
             }
-            return Response(responce_data)
+
+
+            redis_cache: RedisCache = cache # type: ignore  
+            redis_cache.delete_pattern(f'*favorites_{user.clerk_user_id}_*', version=2)
+            
+            if instance.parentFolder is not None:  #clearing the parent folder not the root 
+                redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{instance.parentFolder.pk}_*', version=2)
+                return Response(responce_data)
+            else: #clearing the entire root , since the trash update fileFolder might be a root level Record..
+                redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+                return Response(responce_data)
+
         else:
             responce_data = {
-                "status_code" : 5001,
+                "status_code" : 5002,
                 "message" : "Fodler/File Not Found",
                 "data" : ""
             }
@@ -654,7 +675,14 @@ def getFavoriteFileFolders(request):
             }
             return Response(responce_data)
         
-        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user , is_favorite = True).order_by('-updated_at')
+        pagination_cursor = request.query_params.get("cursor")
+        cache_key = f'favorites_{user.clerk_user_id}_{pagination_cursor}'
+        if cache.has_key(cache_key , version=2):
+            print("fetching the responce from Favorite Cache....")
+            return Response(cache.get(cache_key , version=2))
+
+
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False  , author = user , is_favorite = True).order_by('-updated_at')
 
         if not all_files_folders_instance.exists():
             responce_data = {
@@ -673,6 +701,9 @@ def getFavoriteFileFolders(request):
 
         if paginated_instance is not None:
             serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
+            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data).data
+            print('setting the favorite section')
+            cache.set(cache_key , result , version=2)
             return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data)
         
         serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
@@ -736,7 +767,7 @@ def getSingleImage(request):
             return Response(responce_data)
         else:
             responce_data = {
-                "status_code" : 5001,
+                "status_code" : 5002,
                 "message" : "Image Not Found",
                 "data" : ""
             }
@@ -773,10 +804,15 @@ def getStorageDetails(request):
             }
             return Response(responce_data)
         
+        storage_cache_key = f'storage_stat_of_{user_id}'
+        if cache.has_key(storage_cache_key , version=1):
+            print('Fetching from cache version 1(storage stats)')
+            return Response(cache.get(storage_cache_key , version=1))
+        
         storage_instance = ClerkUserStorage.objects.get(author = user)
         if not storage_instance:
             responce_data = {
-                "status_code" : 5001,
+                "status_code" : 5002,
                 "message" : "Storage Record Not Found",
                 "data" : ""
             }
@@ -785,7 +821,9 @@ def getStorageDetails(request):
                 "request" : request
             }
         serialized_storage_data = UserStorageSerializer(storage_instance, context = context)
-        
+
+        cache.set(storage_cache_key, serialized_storage_data.data, version=1)
+
         responce_data = {
             "status_code" : 5000,
             "message" : "Storage Details Fetched Successfully",
@@ -793,6 +831,500 @@ def getStorageDetails(request):
         }
 
         return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+@api_view(['POST'])
+def get_the_user_for_permission(request):
+    #This Endpoint is used to return the users based on their email addresses so that to fix them with the permissions for accessing our filefolder models.
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        user_permission_email_begining_with = request.data.get('userToFind')
+        if ClerkUserProfile.objects.filter(clerk_user_email__startswith = user_permission_email_begining_with).exists():
+            instance = ClerkUserProfile.objects.filter(clerk_user_email__icontains = user_permission_email_begining_with)
+            context = {
+                "request" : request
+            }
+            serialized_data = PermissionUserSerializer(instance, many=True , context=context)
+            responce_data = {
+                "status_code" : 5000,
+                "message" : f"Users with email that starts with {user_permission_email_begining_with}",
+                "data" : serialized_data.data
+            }
+            return Response(responce_data)
+        else:
+             responce_data = {
+                "status_code" : 5002,
+                "message" : "Opps ! No user found with the given email.",
+                "data" : ""
+             }
+             return Response(responce_data)
+
+
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+@api_view(['POST'])
+def assign_permission_to_user(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        fileFolderID = request.query_params.get("fileFolderID")
+
+        if FileFolderModel.objects.filter(pk = fileFolderID).exists():
+            file_instance = FileFolderModel.objects.get(pk= fileFolderID)
+            if file_instance.author != user:
+                responce_data = {
+                    "status_code" : 5003,
+                    "message" : "You Have No Rights To Access This Data",
+                    "data" : ""
+                }
+                return Response(responce_data)
+
+            data = request.data['usersToGrandPermission']  #Array of objects that contains the emai and permission.
+            try:
+                with transaction.atomic():
+                    for item in data:
+                        email = item['email'].strip()
+                        permission = item['permission'].strip()
+
+                        if permission not in ['VIEW' , 'EDIT' , 'ADMIN']:
+                            responce_data = {
+                                "status_code" : 5002,
+                                "message" : "The Given User Role Doesnt Exists !",
+                                "data" : ""
+                            }
+                            return Response(responce_data)
+                        
+                        if not ClerkUserProfile.objects.filter(clerk_user_email = email).exists():
+                            responce_data = {
+                                "status_code" : 5002,
+                                "message" : "UserNot Found To Be Assigned With Permission!",
+                                "data" : ""
+                            }
+                            return Response(responce_data)
+
+                        #we dont need to create a permission class for the author , there for verfifying that using a if clause.
+                        if email != user.clerk_user_email:
+                            FileFolderPermission.objects.update_or_create(
+                            fileFolder_Instance_id = file_instance,
+                            user_id = ClerkUserProfile.objects.get(clerk_user_email = email),
+                            defaults= {"permission_type" : permission},
+                            create_defaults = {
+                                'fileFolder_Instance_id' : file_instance,
+                                'user_id' : ClerkUserProfile.objects.get(clerk_user_email = email),
+                                'permission_type' : permission
+                            }
+                        )
+                                                    
+                responce_data = {
+                    "status_code" : 5000,
+                    "message" : "Successfully Updated the permissions..",
+                    "data" : ""
+                }
+           
+                redis_cache.delete_pattern(f'*users_with_permission_{fileFolderID}*', version=2)
+
+                return Response(responce_data)
+            except Exception as e:
+                responce_data = {
+                    "status_code" : 5002,
+                    "message" : "Some error Occured...",
+                    "error" : e
+                }
+                return Response(responce_data)
+            
+        else:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "OPPS ! No object Found.",
+                "data" : ""
+            }
+            return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+
+@api_view(['GET'])
+def get_User_With_Permission(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        fileFolderID = request.query_params.get("fileFolderID")
+        if not FileFolderModel.objects.filter(pk = fileFolderID).exists():
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Opps ! FileFolder Record not found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        user_with_access_cache_key = f"users_with_permission_{fileFolderID}"
+        if cache.has_key(user_with_access_cache_key , version=2):
+            print("collecting from permission cache....")
+            return Response(cache.get(user_with_access_cache_key , version=2))
+
+
+        file_instance = FileFolderModel.objects.get(pk=fileFolderID)
+        try:
+            permitted_users_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance)
+            serialized_data = []
+            for permitted_user in permitted_users_instance:
+                res = {
+                    "id" : permitted_user.pk,
+                    "username" : permitted_user.user_id.clerk_user_name,
+                    "email" : permitted_user.user_id.clerk_user_email,
+                    "profile" : permitted_user.user_id.clerk_user_profile_img,
+                    "permission" : permitted_user.permission_type
+                }
+                serialized_data.append(res)
+
+            responce_data = {
+                "status_code" : 5000,
+                "message" : "Successfully Fetched The Data",
+                "data" : serialized_data
+            }
+            cache.set(user_with_access_cache_key, responce_data, version=2)
+            return Response(responce_data)
+        except FileFolderPermission.DoesNotExist:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Permission Record doesnt found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        except Exception as e:
+            responce_data = {
+                "status_code" : 5000,
+                "message" : "Successfully Updated the permissions..",
+                "error" : e
+            }
+            return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+   
+@api_view(['POST'])
+def generate_share_link(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        file_folder_id = request.query_params.get("fileFolderID")
+        file_folder_type = request.query_params.get("type") #used to generate the url with 'image' or 'documents' or 'others' or 'folder'
+        if not file_folder_id:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Record not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        if not FileFolderModel.objects.filter(pk = file_folder_id).exists():
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Record not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        file_folder_instance = FileFolderModel.objects.get(pk = file_folder_id)
+
+        if file_folder_instance.author != user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "Forbidden , You have no acess",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        access_type = request.data.get('access_type') # this is for cumpolsary feature
+
+        #extra contol features given to the pro and advanced premium users.
+        if user.clerk_user_tier in ['PRO' ,'ADVANCED']:
+            password = request.data.get('password')
+            max_count = request.data.get('max_count')
+            expires_at = request.data.get('expires_at')
+
+        if not access_type in ['PUBLIC' , 'PRIVATE']:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Acess Option is not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        if user.clerk_user_tier in ['PRO' ,'ADVANCED']:
+            # premium users can adjust or change there password or expiry time or  max_count
+            try:
+
+                with transaction.atomic():
+                    sharable_instance , created = ShareLink.objects.get_or_create(
+                        file_folder_instance = file_folder_instance,
+                        view_type = access_type,
+                        owner = user,
+                        defaults = {
+                            'file_folder_instance' : file_folder_instance,
+                            'view_type' : access_type,
+                            'data_type' : 'FOLDER' if file_folder_instance.isfolder else 'FILE',
+                            'owner' : user,
+                            'password_hash' :  make_password(password) if password else None,
+                            "max_count" : max_count,
+                            "expires_at" : expires_at
+                        }
+                    )
+            except Exception as e:
+                 responce_data = {
+                    "status_code" : 5002,
+                    "message" : "some error occured with generating the URL",
+                    "data" : ""
+                 }
+                 return Response(responce_data)
+        
+        
+            
+        elif user.clerk_user_tier in ['FREE']:
+            try:
+                with transaction.atomic():
+                    sharable_instance , created = ShareLink.objects.get_or_create(
+                        file_folder_instance = file_folder_instance,
+                        view_type = access_type,
+                        owner = user,
+                        defaults = {
+                            'file_folder_instance' : file_folder_instance,
+                            'view_type' : access_type,
+                            'data_type' : 'FOLDER' if file_folder_instance.isfolder else 'FILE',
+                            'owner' : user,
+                        }
+                    )
+            except Exception as e:
+                 responce_data = {
+                    "status_code" : 5002,
+                    "message" : "some error occured with generating the URL",
+                    "data" : ""
+                 }
+                 return Response(responce_data)
+        
+        sharable_link = f'sharable/{file_folder_type}/{sharable_instance.shareable_id}'
+        responce_data = {
+            "status_code" : 5000,
+            "message" : "Successfully Generated The URL",
+            "data" : {
+                "sharable_link" : sharable_link,
+            }
+        }
+
+        return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+@api_view(['POST'])
+def access_shared_file_folder(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        sharable_uuid = request.query_params.get("sharableUUID") #getting the ID from the params of the url.
+        # if not ShareLink.objects.filter(shareable_id = sharable_uuid).exists():
+        #     responce_data = {
+        #         "status_code" : 5002,
+        #         "message" : "FileFolder Instance Not Found.",
+        #         "data" : ""
+        #     }
+        #     return Response(responce_data)
+        
+        #get_object_or_404 reduces the server hits again and again by just if the record not found it sends a decent error message to frontend or will return our instance... (We can have the customised Global error for instance not found)
+        share_link_instance = get_object_or_404(
+            ShareLink.objects.select_related('file_folder_instance'), #select_related joins the SQL query for getting the share Link along with the file_folder_Instance therefore reducrs two DB hits into One
+            shareable_id=sharable_uuid
+        ) #record that have the details about the sharing link....
+        # Checking if the Link Exists or Not.....
+
+        #trackers used to track the access control
+        has_access = False
+        permission_data = None
+        is_owner = True if share_link_instance.file_folder_instance.author == user else False
+
+        #Skipping all the checks and conditions for the OWNER......
+        if not is_owner:
+            if not share_link_instance.is_active:
+                responce_data = {
+                    "status_code" : 5002,
+                    "message" : "FileFolder Instance Not Found.",
+                    "data" : ""
+                }
+                return Response(responce_data)
+            
+            if share_link_instance.is_expired:
+                responce_data = {
+                    "status_code" : 5004,
+                    "message" : "Link is_expired, it cant be used....",
+                    "data" : ""
+                }
+                return Response(responce_data)
+            
+            if share_link_instance.count_limited:
+                responce_data = {
+                    "status_code" : 5006,
+                    "message" : "The No Of Times The Link Should Use Crossed The Limit.",
+                    "data" : ""
+                }
+                return Response(responce_data)
+
+
+        if share_link_instance.view_type == "PUBLIC" or is_owner:
+            has_access = True   
+        elif share_link_instance.view_type == "PRIVATE":
+            file_permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = share_link_instance.file_folder_instance , user_id = user).first()  #this approch reduces the hit to the server by checking and collecting the first record just in one DB hit -> Returns the value else None will be returned.
+            if file_permission_instance:
+                # Adding the extra permisson details also with the fileFolder data to the protected user.....
+                has_access = True
+                permission_data = {
+                    "permission_type" : file_permission_instance.permission_type,
+                    "permission_granded_at" : file_permission_instance.permission_granted_at,
+                } 
+            elif share_link_instance.password_hash:
+                password = request.data.get("password") #collecting the password from user.
+                if not check_password(password , share_link_instance.password_hash):
+                    responce_data = {
+                        "status_code" : 5008,
+                        "message" : "Wrong Password , Try Again Later!",
+                        "data" : ""
+                    }
+                    return Response(responce_data)
+                has_access=True  
+            
+
+        #is the user have no access , we return them Forbidden message......
+        if not has_access:    
+            responce_data = {
+                "status_code" : 4002,
+                "message" : "Forbidden ! You Have No Access.",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        if not is_owner: #skipping the access_count functionality for owner.......
+            ShareLink.objects.filter(pk=share_link_instance.pk).update(
+                access_count=F('access_count') + 1
+            )
+            share_link_instance.refresh_from_db() #refreshing it to get the new corrected values.....
+        context = {
+            "request" : request
+        }
+        serialized_data = FileFolderShareSerializer(share_link_instance.file_folder_instance , context=context)
+        data = serialized_data.data #getting the first elemt (we have only first...)
+        print(data)
+        if permission_data:
+            data['permission_data'] = permission_data
+        
+        return Response({
+            "status_code": 5000,
+            "message": "Successfully fetched resource",
+            "data": data
+            })
     else:
         responce_data = {
             "status_code" : 4001,

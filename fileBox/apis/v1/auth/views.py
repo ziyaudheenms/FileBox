@@ -32,6 +32,7 @@ def create_clerk_user(request):
 
         #gettiing the username and primary email address from clerk user object
         username = clerk_user.username
+        profile_image = clerk_user.profile_image_url
         primary_email_address_id = clerk_user.primary_email_address_id  #getting the primary email address id from clerk user object.
         emails = clerk_user.email_addresses
         email = None
@@ -48,6 +49,7 @@ def create_clerk_user(request):
             clerk_user_id = user_id,
             clerk_user_name = username,
             clerk_user_email = email,
+            clerk_user_profile_img = profile_image,
         )
 
         ClerkUserStorage.objects.create(
@@ -93,6 +95,7 @@ def update_clerk_user(request):
         print("passed the section 3")
         #gettiing the username and primary email address from clerk user object
         username = clerk_user.username
+        profile_image = clerk_user.profile_image_url
         primary_email_address_id = clerk_user.primary_email_address_id  #getting the primary email address id from clerk user object.
         emails = clerk_user.email_addresses
         email = None
@@ -106,7 +109,8 @@ def update_clerk_user(request):
         #Updating the user details in our database.
         user_Instance = ClerkUserProfile.objects.get(clerk_user_id = user_id)
         user_Instance.clerk_user_name = username
-        user_Instance.clerk_user_email = email
+        user_Instance.clerk_user_email = email,
+        user_Instance.clerk_user_profile_img = profile_image
         user_Instance.save()
         print("passed the section 5")
         responce_data = {

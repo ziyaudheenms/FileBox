@@ -1,7 +1,8 @@
-from email.mime import image
-from pyexpat import model
-from django.db import models
+from typing import Any
+import uuid
 
+from django.db import models
+from django.utils import timezone
 # Create your models here.
 
 
@@ -14,13 +15,15 @@ class ClerkUserProfile(models.Model):
         ]
     clerk_user_id = models.TextField(null=False , unique=True , db_index=True)  #used for fast fetching of the clerkID without the need of scanning the entire Database.
     clerk_user_name = models.TextField(null=False)
-    clerk_user_email = models.EmailField(null=False)
+    clerk_user_email = models.EmailField(null=False , unique=True)
     clerk_user_created_at = models.DateTimeField(auto_now_add=True)
     clerk_user_updated_at = models.DateTimeField(auto_now=True)
     clerk_user_tier = models.CharField(max_length=50 , null=False , choices=TIER_OPTIONS , default='FREE')
+    clerk_user_profile_img = models.TextField(default="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRFCzxivJXCZk0Kk8HsHujTO3Olx0ngytPrWw&s",)
 
     def __str__(self) -> str:
         return self.clerk_user_name
+
     
 
 class FileFolderModel(models.Model):
@@ -73,3 +76,57 @@ class ClerkUserStorage(models.Model):
     def __str__(self):
         return f"Storage Stats of {self.author.clerk_user_name}"
 
+#DataBase Model to handle the permissions of accessing , edititing of a fileFolder instance. (User's Access in a protected fileFolder)
+class FileFolderPermission(models.Model):
+    STATUS_CHOICES = [
+        ('VIEW', 'View'), # can only view the fileFolder or instances like that.
+        ('EDIT', 'Edit'), # can view + edit the fileFolder or instances like that. (remane , add description)
+        ('ADMIN', 'Admin'), # can do anything as like the author of the fileFolder or instances like that. (remane , add description , delete , reupload)
+    ]
+
+    fileFolder_Instance_id = models.ForeignKey(FileFolderModel, on_delete=models.CASCADE, related_name="file_folder_permissions")
+    user_id = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="user_to_be_granted_with_permission")
+    permission_type = models.CharField(max_length=100 , choices=STATUS_CHOICES , default="VIEW")
+    permission_granted_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.user_id.clerk_user_name} - {self.permission_type} - {self.fileFolder_Instance_id.name}"
+
+class ShareLink(models.Model):
+    VIEW_CHOICES = [
+        ('PUBLIC', 'Public'), # can only view the fileFolder or instances like that.
+        ('PRIVATE', 'Private'), # can only view the fileFolder or instances like that. 
+    ]
+    TYPE_CHOICES = [
+        ('FILE', 'File'), # can only view the fileFolder or instances like that.
+        ('FOLDER', 'Folder'), # can only view the fileFolder or instances like that.   
+    ]
+    shareable_id = models.UUIDField(default=uuid.uuid4, editable=False, db_index=True) #used to store the custom ID to be send with the url
+    view_type = models.CharField(max_length=100 , choices=VIEW_CHOICES , default='PRIVATE') 
+    file_folder_instance = models.ForeignKey(FileFolderModel, on_delete=models.CASCADE, related_name="file_folder")
+    owner = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE , related_name="share_owner")
+    data_type = models.CharField(max_length=100 , choices=TYPE_CHOICES , default='FILE')
+    is_active = models.BooleanField(default=True)
+
+    #Premium Feature -> 
+    expires_at = models.DateTimeField(null=True, blank=True)
+    password_hash = models.TextField(null=True) #used to store the hashed password in case the fileFolder is a password protected one  (PREMIUM FEATURE)
+    access_count = models.IntegerField(default=0) # How many time the fileFolder instace has been opened.
+    max_count = models.IntegerField(null=True, blank=True) #used to set the no of times this fileFolder should be clicked.
+
+    @property
+    def is_expired(self):  #returns true if the sharable link is expired , 
+        if self.expires_at and timezone.now() > self.expires_at:
+            return True
+        return False
+    
+    @property
+    def count_limited(self):
+        if self.max_count and self.access_count >= self.max_count:
+            return True
+        return False
+    
+
+
+    def __str__(self):
+        return f"{self.shareable_id} - {self.view_type} - {self.owner.clerk_user_name}"

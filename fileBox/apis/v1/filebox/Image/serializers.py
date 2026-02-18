@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from Backend.models import FileFolderModel , ClerkUserStorage
+from Backend.models import FileFolderModel , ClerkUserStorage , ClerkUserProfile
 
 
 class FileFolderSerializer(serializers.ModelSerializer):
@@ -92,3 +92,38 @@ class UserStorageSerializer(serializers.ModelSerializer):
     def get_storage_percentage_used(self, instance):
         calculation = (instance.clerk_user_used_storage / instance.clerk_user_storage_limit ) * 100
         return round(calculation, 2)
+    
+
+class PermissionUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClerkUserProfile
+        fields = [ 'clerk_user_name' , 'clerk_user_email' , 'clerk_user_profile_img' , "pk"]
+
+
+class FileFolderShareSerializer(serializers.ModelSerializer):
+    
+    author = serializers.SerializerMethodField()
+    size = serializers.SerializerMethodField()
+    parentFolder = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FileFolderModel
+        exclude = ['celery_task_ID', 'upload_status','is_favorite','is_trash']
+
+    def get_author(self, instance):
+        return instance.author.clerk_user_name
+    
+    def get_size(self, instance):
+        if instance.isfolder:
+            total_instance = FileFolderModel.objects.filter(parentFolder=instance , is_trash=False)
+            total_size = sum([file.size for file in total_instance])
+            return total_size if total_size else 0
+        else:
+            return instance.size
+        
+    def get_parentFolder(self, instance):
+        if instance.is_root:
+            return None
+        else:
+            return instance.parentFolder.name
+        
