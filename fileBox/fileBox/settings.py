@@ -160,7 +160,8 @@ AUTH_PASSWORD_VALIDATORS = [
 REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',
-    ]
+    ],
+    'EXCEPTION_HANDLER': 'fileBox.exceptions.file_box_exception_handler',
 }
 
 
