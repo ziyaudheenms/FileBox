@@ -43,6 +43,46 @@ FileBox is a high-performance, full-stack cloud storage solution designed for sp
 - Owner-based access control with strict guest filtering
 - Link expiration and password-protected sharing support
 
+## 📁 Project Structure
+
+```
+filebox-backend/
+├── readme.md                 # Project overview & setup
+├── readme.py               # Quick README viewer
+├── requirements.txt
+├── manage.py
+├── db.sqlite3
+├── fileBox/                # Django project settings
+│   ├── settings.py
+│   ├── asgi.py
+│   ├── wsgi.py
+│   ├── celery.py
+│   ├── urls.py
+│   ├── routing.py
+│   ├── consumers.py
+│   ├── ws_middleware.py
+│   └── exceptions.py
+├── apis/                   # API layer
+│   └── v1/                # Versioned APIs
+│       ├── auth/          # Authentication endpoints
+│       └── filebox/       # File APIs
+│           ├── serializers.py
+│           ├── views.py
+│           └── pagination.py
+├── Backend/               # Core Django app
+│   ├── models.py
+│   ├── views.py
+│   ├── tasks.py
+│   ├── tests.py
+│   ├── admin.py
+│   ├── ratelimit.py
+│   └── migrations/
+├── joined_files/          # Storage runtime data
+├── temp_chunks/           # Temporary file chunks
+└── ...
+```
+
+
 ## 🔧 Installation & Setup
 
 ### Prerequisites
