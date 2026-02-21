@@ -103,13 +103,13 @@ def update_clerk_user(request):
         #getting the correct email address using the primary email address id.
         for correct_email in emails:
             if correct_email.id == primary_email_address_id:
-                email = correct_email.email_address
+                email = correct_email.email_address[0]
                 break
 
         #Updating the user details in our database.
         user_Instance = ClerkUserProfile.objects.get(clerk_user_id = user_id)
         user_Instance.clerk_user_name = username
-        user_Instance.clerk_user_email = email,
+        user_Instance.clerk_user_email = email
         user_Instance.clerk_user_profile_img = profile_image
         user_Instance.save()
         print("passed the section 5")
