@@ -97,6 +97,13 @@ def uploadImage(request):
         )
         #task is queued to work at offload , so that to avoid the smooth fuctioning of api and workflow of the system.
         print(file_instance.pk)
+        if file_instance.is_root:
+            print("deleting thr image.........(root)")
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+        else:
+            print("deleting thr image.........")
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)
+
         queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk)
 
         file_instance.celery_task_ID = queue_worker.id
@@ -228,6 +235,13 @@ def JoinChunks(request):
         queue_worker = upload_image_to_imagekit.delay(file_name , file_base64 , file_instance.pk)
         file_instance.celery_task_ID = queue_worker.id
         file_instance.save()
+
+        if file_instance.is_root:
+            print("deleting thr image.........(root)")
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+        else:
+            print("deleting thr image.........")
+            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)
 
         responce_data = {
             "status_code": 5000,
@@ -525,6 +539,8 @@ def getAllFileFolders(request):
         parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
         pagination_cursor = request.query_params.get("cursor")
 
+        # redis_cache: RedisCache = cache # type: ignore
+        # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
         cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
 
         print('Generated Cache Key', cache_key)

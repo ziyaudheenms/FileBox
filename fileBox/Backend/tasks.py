@@ -10,6 +10,8 @@ from django.db.models import F
 from django.core.cache import cache
 from django_redis.cache import RedisCache
 
+redis_cache: RedisCache = cache # type: ignore
+
 @shared_task
 def upload_image_to_imagekit(filename , filebase64 , file_modelID):
 
@@ -54,6 +56,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
                     clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
                     total_image_storage=F('total_image_storage') + file_instance.size
                 )
+                redis_cache.delete_pattern(f'*storage_stat_of_{file_instance.author.clerk_user_id}*', version=1) 
             else:
                 print("Storage instance not found for the user")
 
@@ -67,9 +70,6 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
                     "file_url" : file_instance.file_url,
                 }
             )
-
-            redis_cache: RedisCache = cache # type: ignore
-            redis_cache.delete_pattern(f'storage_stat_of_{file_instance.author.clerk_user_id}*', version=1)
 
             if file_instance.is_root:
                 redis_cache.delete_pattern(f'*file_folder_list_{file_instance.author.clerk_user_id}_*', version=2)
