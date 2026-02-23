@@ -8,7 +8,7 @@ from click import File
 from django.db import transaction
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import F
-
+from django.core.exceptions import ValidationError
 # importing django cache system 
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
@@ -1250,14 +1250,23 @@ def access_shared_file_folder(request):
         #         "data" : ""
         #     }
         #     return Response(responce_data)
+        try:
+            share_link_instance = ShareLink.objects.select_related('file_folder_instance').get(shareable_id = sharable_uuid) #collecting the instance based on the ID given in the URL.Select_related is used to reduce the number of queries to the database by fetching the related file_folder_instance in the same query as the ShareLink instance.  
+        except ShareLink.DoesNotExist:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "FileFolder Instance Not Found.",
+                "data" : ""
+            }
+            return Response(responce_data)  
+        except Exception as e:
+             responce_data = {
+                "status_code" : 5002,
+                "message" : "FileFolder Instance Not Found.",
+                "data" : ""
+            }
+             return Response(responce_data) 
         
-        #get_object_or_404 reduces the server hits again and again by just if the record not found it sends a decent error message to frontend or will return our instance... (We can have the customised Global error for instance not found)
-        share_link_instance = get_object_or_404(
-            ShareLink.objects.select_related('file_folder_instance'), #select_related joins the SQL query for getting the share Link along with the file_folder_Instance therefore reducrs two DB hits into One
-            shareable_id=sharable_uuid
-        ) #record that have the details about the sharing link....
-        # Checking if the Link Exists or Not.....
-
         #trackers used to track the access control
         has_access = False
         permission_data = None
@@ -1291,7 +1300,11 @@ def access_shared_file_folder(request):
 
 
         if share_link_instance.view_type == "PUBLIC" or is_owner:
-            has_access = True   
+            has_access = True  
+            permission_data = {
+                "permission_type" : "OWNER" if is_owner else "PUBLIC",
+                "permission_granded_at" : None if not is_owner else share_link_instance.file_folder_instance.uploaded_at,
+            }  
         elif share_link_instance.view_type == "PRIVATE":
             file_permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = share_link_instance.file_folder_instance , user_id = user).first()  #this approch reduces the hit to the server by checking and collecting the first record just in one DB hit -> Returns the value else None will be returned.
             if file_permission_instance:
