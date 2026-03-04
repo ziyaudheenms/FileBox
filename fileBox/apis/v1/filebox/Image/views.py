@@ -1270,6 +1270,7 @@ def access_shared_file_folder(request):
         #trackers used to track the access control
         has_access = False
         permission_data = None
+        variable_to_track = None
         is_owner = True if share_link_instance.file_folder_instance.author == user else False
 
         #Skipping all the checks and conditions for the OWNER......
