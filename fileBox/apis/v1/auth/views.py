@@ -54,7 +54,7 @@ def create_clerk_user(request):
 
         ClerkUserStorage.objects.create(
             author = instance,
-            clerk_user_storage_limit = 5,
+            clerk_user_storage_limit =  1048576,  # one gb that is converted into kb and stored in the database for better calculation in future when we need to calculate the storage limit and used storage of each user based on their tier.
             clerk_user_used_storage = 0,
             total_image_storage = 0,
             total_document_storage = 0,
@@ -103,7 +103,7 @@ def update_clerk_user(request):
         #getting the correct email address using the primary email address id.
         for correct_email in emails:
             if correct_email.id == primary_email_address_id:
-                email = correct_email.email_address[0]
+                email = correct_email.email_address
                 break
 
         #Updating the user details in our database.

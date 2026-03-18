@@ -928,11 +928,15 @@ def assign_permission_to_user(request):
             }
             return Response(responce_data)
         
+        #updating the function so that admin and owner both can assign the permissions to other users, but the owner will have the permission to assign the admin role to other users 
         fileFolderID = request.query_params.get("fileFolderID")
+        file_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
+        permission_folder = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance , user_id = user).first() #checking if the user have any permission assigned for the filefolder instance or not (check + fetch in one step) if not found , it will give none.
+        if file_instance is not None:
+            is_owner = file_instance.author.clerk_user_id == user_id
+            is_admin = permission_folder.permission_type == 'ADMIN' if permission_folder else False
 
-        if FileFolderModel.objects.filter(pk = fileFolderID).exists():
-            file_instance = FileFolderModel.objects.get(pk= fileFolderID)
-            if file_instance.author != user:
+            if not is_owner and not is_admin:
                 responce_data = {
                     "status_code" : 5003,
                     "message" : "You Have No Rights To Access This Data",
@@ -955,10 +959,18 @@ def assign_permission_to_user(request):
                             }
                             return Response(responce_data)
                         
+                        if permission == 'ADMIN' and not is_owner:
+                            responce_data = {
+                                "status_code" : 5002,
+                                "message" : "Only Owner Can Assign Admin Role To Other Users !",
+                                "data" : ""
+                            }
+                            return Response(responce_data)
+                        
                         if not ClerkUserProfile.objects.filter(clerk_user_email = email).exists():
                             responce_data = {
                                 "status_code" : 5002,
-                                "message" : "UserNot Found To Be Assigned With Permission!",
+                                "message" : "User Not Found To Be Assigned With Permission!",
                                 "data" : ""
                             }
                             return Response(responce_data)
@@ -1031,7 +1043,8 @@ def get_User_With_Permission(request):
             return Response(responce_data)
         
         fileFolderID = request.query_params.get("fileFolderID")
-        if not FileFolderModel.objects.filter(pk = fileFolderID).exists():
+        file_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
+        if not file_instance:
             responce_data = {
                 "status_code" : 5002,
                 "message" : "Opps ! FileFolder Record not found",
@@ -1044,11 +1057,17 @@ def get_User_With_Permission(request):
             print("collecting from permission cache....")
             return Response(cache.get(user_with_access_cache_key , version=2))
 
-
-        file_instance = FileFolderModel.objects.get(pk=fileFolderID)
         try:
             permitted_users_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance)
-            serialized_data = []
+            serialized_data = [  #populating it with the author details with permission as owner
+                {
+                "id" : file_instance.author.pk if file_instance else None,
+                "username" : file_instance.author.clerk_user_name if file_instance else None,
+                "email" : file_instance.author.clerk_user_email if file_instance else None,
+                "profile" : file_instance.author.clerk_user_profile_img if file_instance else None,
+                "permission" : "OWNER"
+                }
+            ]
             for permitted_user in permitted_users_instance:
                 res = {
                     "id" : permitted_user.pk,

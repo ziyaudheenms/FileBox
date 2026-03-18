@@ -47,6 +47,9 @@ class UserStorageSerializer(serializers.ModelSerializer):
     
     def get_clerk_user_storage_limit(self, instance):
         gb_typecated_value = instance.clerk_user_storage_limit / (1024 * 1024)
+        print(instance.clerk_user_storage_limit , "storage limit")
+        print(gb_typecated_value)
+        print(round(gb_typecated_value, 2))
         return f"{round(gb_typecated_value, 2)} GB"
     
     def get_clerk_user_used_storage(self, instance):
@@ -91,7 +94,9 @@ class UserStorageSerializer(serializers.ModelSerializer):
     
     def get_storage_percentage_used(self, instance):
         calculation = (instance.clerk_user_used_storage / instance.clerk_user_storage_limit ) * 100
-        return round(calculation, 2)
+        print(calculation)
+        print(round(calculation, 2))
+        return round(calculation, 2)    
     
 
 class PermissionUserSerializer(serializers.ModelSerializer):
