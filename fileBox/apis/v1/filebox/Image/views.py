@@ -944,49 +944,79 @@ def assign_permission_to_user(request):
                 }
                 return Response(responce_data)
 
-            data = request.data['usersToGrandPermission']  #Array of objects that contains the emai and permission.
+            data_to_assign_permission = request.data['usersToGrandPermission']  #Array of objects that contains the emai and permission to assign permission.
+            data_to_remove_permission = request.data['usersToRemovePermission']  #Array of objects that contains the emai and permission to remove them.
             try:
                 with transaction.atomic():
-                    for item in data:
-                        email = item['email'].strip()
-                        permission = item['permission'].strip()
+                    
+                    if len(data_to_assign_permission) > 0: #checking if both the arrays are empty or not , if they are empty then there is no need to perform any operation on database and we can directly return the responce.
+                        # collecting the email addresses
+                        emails_to_assign_with_permission = [item['email'].strip() for item in data_to_assign_permission]  #List of email addresses to whom the permission is going to be assigned.
+                        #mapping the users {email : user instance}
+                        users = {
+                            u.clerk_user_email : u for u in ClerkUserProfile.objects.filter(clerk_user_email__in = emails_to_assign_with_permission) #fetching the user instances for the email addresses to whom the permission is going to be assigned in one query and creating a dictionary with email as key and user instance as value for the future use.
+                        }
+                        permissions_to_be_allocated = [] #List to hold the permission instances to be created for bulk creation.
+                        for item in data_to_assign_permission:
+                            email = item['email'].strip()
+                            permission = item['permission'].strip()
 
-                        if permission not in ['VIEW' , 'EDIT' , 'ADMIN']:
-                            responce_data = {
-                                "status_code" : 5002,
-                                "message" : "The Given User Role Doesnt Exists !",
-                                "data" : ""
-                            }
-                            return Response(responce_data)
-                        
-                        if permission == 'ADMIN' and not is_owner:
-                            responce_data = {
-                                "status_code" : 5002,
-                                "message" : "Only Owner Can Assign Admin Role To Other Users !",
-                                "data" : ""
-                            }
-                            return Response(responce_data)
-                        
-                        if not ClerkUserProfile.objects.filter(clerk_user_email = email).exists():
-                            responce_data = {
-                                "status_code" : 5002,
-                                "message" : "User Not Found To Be Assigned With Permission!",
-                                "data" : ""
-                            }
-                            return Response(responce_data)
+                            if permission not in ['VIEW' , 'EDIT' , 'ADMIN']:
+                                responce_data = {
+                                    "status_code" : 5002,
+                                    "message" : "The Given User Role Doesnt Exists !",
+                                    "data" : ""
+                                }
+                                return Response(responce_data)
+                            
+                            if permission == 'ADMIN' and not is_owner:
+                                responce_data = {
+                                    "status_code" : 5002,
+                                    "message" : "Only Owner Can Assign Admin Role To Other Users !",
+                                    "data" : ""
+                                }
+                                return Response(responce_data)
+                            
+                            #checking if the user exists to whom we want to assign permission
+                            user_to_assign_permission_clerk_instance = users.get(email)
+                            if not user_to_assign_permission_clerk_instance:
+                                responce_data = {
+                                    "status_code" : 5002,
+                                    "message" : "User Not Found To Be Assigned With Permission!",
+                                    "data" : ""
+                                }
+                                return Response(responce_data)
 
-                        #we dont need to create a permission class for the author , there for verfifying that using a if clause.
-                        if email != user.clerk_user_email:
-                            FileFolderPermission.objects.update_or_create(
-                            fileFolder_Instance_id = file_instance,
-                            user_id = ClerkUserProfile.objects.get(clerk_user_email = email),
-                            defaults= {"permission_type" : permission},
-                            create_defaults = {
-                                'fileFolder_Instance_id' : file_instance,
-                                'user_id' : ClerkUserProfile.objects.get(clerk_user_email = email),
-                                'permission_type' : permission
+                            #we dont need to create a permission class for the author , there for verfifying that using a if clause.
+                            if email != user.clerk_user_email:
+                                permissions_to_be_allocated.append(
+                                    FileFolderPermission(
+                                        fileFolder_Instance_id = file_instance,
+                                        user_id = user_to_assign_permission_clerk_instance,
+                                        permission_type = permission
+                                    )
+                                )
+                    
+                        if permissions_to_be_allocated:
+                            FileFolderPermission.objects.bulk_create(
+                                permissions_to_be_allocated,
+                                update_conflicts=True,  # This is an important part of this bulk create function , what it does is if the record already exists it just updates it with update field.
+                                unique_fields=['fileFolder_Instance_id', 'user_id'],  # This is also an important part of this bulk create function , it tells that which fields to look for to check the existing record for updating the record if already exists while creating the new one.
+                                update_fields=['permission_type']  # This is also an important part of this bulk create function , it tells that which field to update if the record already exists while creating the new one.
+                            )
+                        
+                    email_to_remove_permission_list = [item['email'].strip() for item in data_to_remove_permission]  #List of email addresses to whom the permission is going to be removed.
+                    if email_to_remove_permission_list:
+                        permission_record_with_user = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance , user_id__clerk_user_email__in = email_to_remove_permission_list)#Joint Query is performed , user_id__ is used to access the fields of the related model (ClerkUserProfile) while filtering the FileFolderPermission model based on the email of the user to whom the permission is going to be removed.
+                        if permission_record_with_user.count() != len(email_to_remove_permission_list):  #checking if the number of permission records found with the given email addresses is same as the number of email addresses to whom the permission is going to be removed or not , if not then it means that some of the email addresses are invalid which are not present in our clerk user profile or they are not having any permission assigned for that filefolder instance.
+                            responce_data = {
+                                "status_code" : 5002,
+                                "message" : "Some of the email addresses provided for removing the permissions are invalid or they are not having any permission assigned for this file/folder instance!",
+                                "data" : ""
                             }
-                        )
+                            return Response(responce_data)
+                        permission_record_with_user.delete()  #deleting the permission record to remove the permissions from the user.
+                        
                                                     
                 responce_data = {
                     "status_code" : 5000,
