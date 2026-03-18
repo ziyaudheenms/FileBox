@@ -89,8 +89,14 @@ class FileFolderPermission(models.Model):
     permission_type = models.CharField(max_length=100 , choices=STATUS_CHOICES , default="VIEW")
     permission_granted_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        # This creates a Composite Unique Index in SQL (ensures that a user cannot have multiple permissions for the same file/folder instance)
+        unique_together = ('fileFolder_Instance_id', 'user_id')
+
     def __str__(self):
         return f"{self.user_id.clerk_user_name} - {self.permission_type} - {self.fileFolder_Instance_id.name}"
+    
+
 
 class ShareLink(models.Model):
     VIEW_CHOICES = [
