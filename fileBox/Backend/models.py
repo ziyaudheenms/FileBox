@@ -36,13 +36,16 @@ class FileFolderModel(models.Model):
     #All the comman record field to be collected regardless of if it's a file/folder
     author = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="user")
     name = models.TextField(null=False)
+    type_of_file_folder = models.CharField(max_length=100 , null=True , blank=True) #used to track the type of the file (image , document , other) if it's a file and will be null if it's a folder
     size = models.BigIntegerField(null=False , default=0) #if the data record is folder , we will dynamically set the size in the  serializer.
     uploaded_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
-
+    
     isfolder = models.BooleanField(default=False) # Used to track whether its a folder or file
     is_root = models.BooleanField(default=True)  #used to track whether the Folder is a root folder or a sub folder
     parentFolder = models.ForeignKey("self" , on_delete=models.CASCADE, null=True , blank=True) #if the data is in the root structure , we dont have a parent folder other wise store the id of the parent
+    path = models.TextField(null=True, blank=True, default=None) #used to track the parent structure  (will be null if is_root is True)
+
 
     #if the data is a file we need all this data
     file_url = models.URLField(null=True , blank=True) #if it's file we need the url of the data

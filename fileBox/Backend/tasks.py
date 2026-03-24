@@ -1,3 +1,4 @@
+import os
 import base64
 import io
 from turtle import st
@@ -9,7 +10,9 @@ from asgiref.sync import async_to_sync
 from django.db.models import F
 from django.core.cache import cache
 from django_redis.cache import RedisCache
+from dotenv import load_dotenv
 
+load_dotenv()
 redis_cache: RedisCache = cache # type: ignore
 
 @shared_task
@@ -33,10 +36,10 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
         print("Initializing the imagekit SDK")
         #Initializing the imagekit SDK
         imagekit = ImageKit(
-        private_key='private_ugNvkxKX0QyRm6GxSayXwmHN/Nc=',
-        public_key='public_n2oE0DAKbwzawEUN8Jr5nZgZerg=',
-        url_endpoint="https://ik.imagekit.io/ijp7dfuzp"
-        )
+                private_key=os.getenv("IMAGEKIT_PRIVATE_KEY"),
+                public_key=os.getenv("IMAGEKIT_PUBLIC_KEY"),
+                url_endpoint=os.getenv("IMAGEKIT_URL_ENDPOINT")
+            )
         print("Trying to Upload the image")
         #Uploading the image to imagekit SDK
         uploaded_image = imagekit.upload(
