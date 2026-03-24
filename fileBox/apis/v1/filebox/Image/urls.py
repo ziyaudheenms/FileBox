@@ -21,5 +21,6 @@ urlpatterns = [
     path('permission/Users' , views.get_User_With_Permission),
     path('get/sharableLink' , views.generate_share_link),
     path('get/sharedFileFolder' , views.access_shared_file_folder),
+    path('get/sharedFileFolder/child' , views.access_child_of_shared_folder),
 ]
                             

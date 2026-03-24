@@ -17,6 +17,7 @@ from django_redis.cache import RedisCache
 #importing the dotenv packages and rest framework packages 
 from django.conf import settings
 from dotenv import load_dotenv
+from httpx import delete
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 
@@ -37,9 +38,9 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
+from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
-
+from ..hashDependency import hash_ID
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
@@ -84,12 +85,21 @@ def uploadImage(request):
             else:
                 folder = None
 
+        ## Calculations so that to determine the path , handled the edge case of if the parent's path  is none 
+        path_to_be_appended = None
+        if folder is not None:
+            if folder.path is not None:
+                path_to_be_appended = f'{folder.path}/{folder.pk}'
+            else:
+                path_to_be_appended = f'{folder.pk}'
+
         #creating the dummy record for reference in the frontend()
         file_instance = FileFolderModel.objects.create(
             author = user,
             name = filename,
             size = filesize,
             is_root = True if folder == None else False,
+            path = path_to_be_appended,
             parentFolder = folder,
             file_url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEpYntNMtkoBOau-IFwoq7wUlivz4VfNir9g&s",
             file_extension = extension,
@@ -218,12 +228,21 @@ def JoinChunks(request):
                 folder = FileFolderModel.objects.get(pk = folder_name_info)
             else:
                 folder = None
+
+        path_to_be_appended = None
+        if folder is not None:
+            if folder.path is not None:
+                path_to_be_appended = f'{folder.path}/{folder.pk}'
+            else:
+                path_to_be_appended = f'{folder.pk}'
+
         #creating the dummy record for reference in the frontend()
         file_instance = FileFolderModel.objects.create(
             author = user,
             name = file_name,
             size = file_size,
             is_root = True if folder == None else False,
+            path = path_to_be_appended,
             parentFolder = folder,
             file_url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEpYntNMtkoBOau-IFwoq7wUlivz4VfNir9g&s",
             file_extension = file_extenstion,
@@ -297,13 +316,20 @@ def createFolder(request):
 
         print(folder)
 
-
+        path_to_be_appended = None
+        if folder is not None:
+            if folder.path is not None:
+                path_to_be_appended = f'{folder.path}/{folder.pk}'
+            else:
+                path_to_be_appended = f'{folder.pk}'
+    
         folder_instance = FileFolderModel.objects.create(
             author = user,
             name = folder_name,
             size = 0,
             isfolder = True,
             is_root = True if folder == None else False,
+            path = path_to_be_appended,
             parentFolder = folder,
             upload_status = "UPLOADED"
         )
@@ -542,7 +568,6 @@ def getAllFileFolders(request):
         # redis_cache: RedisCache = cache # type: ignore
         # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
         cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
-
         print('Generated Cache Key', cache_key)
 
         #looking up in cache for the required data.
@@ -1167,7 +1192,9 @@ def generate_share_link(request):
             }
             return Response(responce_data)
 
-        if not FileFolderModel.objects.filter(pk = file_folder_id).exists():
+        file_folder_instance = FileFolderModel.objects.select_related('author').filter(pk = file_folder_id).first()
+
+        if file_folder_instance is None:
             responce_data = {
                 "status_code" : 5002,
                 "message" : "Record not Found",
@@ -1175,8 +1202,6 @@ def generate_share_link(request):
             }
             return Response(responce_data)
         
-        file_folder_instance = FileFolderModel.objects.get(pk = file_folder_id)
-
         if file_folder_instance.author != user:
             responce_data = {
                 "status_code" : 4001,
@@ -1196,7 +1221,7 @@ def generate_share_link(request):
         if not access_type in ['PUBLIC' , 'PRIVATE']:
             responce_data = {
                 "status_code" : 5002,
-                "message" : "Acess Option is not Found",
+                "message" : "Access Option is not Found",
                 "data" : ""
             }
             return Response(responce_data)
@@ -1292,13 +1317,7 @@ def access_shared_file_folder(request):
             return Response(responce_data)
         
         sharable_uuid = request.query_params.get("sharableUUID") #getting the ID from the params of the url.
-        # if not ShareLink.objects.filter(shareable_id = sharable_uuid).exists():
-        #     responce_data = {
-        #         "status_code" : 5002,
-        #         "message" : "FileFolder Instance Not Found.",
-        #         "data" : ""
-        #     }
-        #     return Response(responce_data)
+
         try:
             share_link_instance = ShareLink.objects.select_related('file_folder_instance').get(shareable_id = sharable_uuid) #collecting the instance based on the ID given in the URL.Select_related is used to reduce the number of queries to the database by fetching the related file_folder_instance in the same query as the ShareLink instance.  
         except ShareLink.DoesNotExist:
@@ -1319,14 +1338,14 @@ def access_shared_file_folder(request):
         #trackers used to track the access control
         has_access = False
         permission_data = None
-        variable_to_track = None
+        is_folder = True if share_link_instance.file_folder_instance.isfolder else False  #if its folder we have to implement folder listing logic................
         is_owner = True if share_link_instance.file_folder_instance.author == user else False
 
         #Skipping all the checks and conditions for the OWNER......
         if not is_owner:
             if not share_link_instance.is_active:
                 responce_data = {
-                    "status_code" : 5002,
+                    "status_code" : 5001,
                     "message" : "FileFolder Instance Not Found.",
                     "data" : ""
                 }
@@ -1360,10 +1379,38 @@ def access_shared_file_folder(request):
             if file_permission_instance:
                 # Adding the extra permisson details also with the fileFolder data to the protected user.....
                 has_access = True
+
+                ids = share_link_instance.file_folder_instance.path.split("/") if share_link_instance.file_folder_instance.path else []
+                ids.append(str(share_link_instance.file_folder_instance.pk))
+                permissions = FileFolderPermission.objects.filter(fileFolder_Instance_id__in=ids).values_list('permission_type', flat=True)
+                print(ids)
+                #used for creating the path for the shared fileFolders  (BUILDING SECURE BREADCRUM PATHS FOR SHARING FUNCTIONALITY)
+                first_id = FileFolderPermission.objects.filter(fileFolder_Instance_id__in=ids).order_by('fileFolder_Instance_id__path').values_list('fileFolder_Instance_id', flat=True).first()      # orderby is used so that to sort the records such that smallest path somes first eg a, a/b , a/b/c ect and we can easily get the original first one [BECAUSE .FILTER DOESNT GUARENTEES A ORDERD LISITING WHICH MEANS IT CAN GIVE AS a/b/c/d AS THE FIRST ONE ]
+                start_index = ids.index(str(first_id)) if str(first_id) in ids else 0
+                ids = ids[start_index:]
+                print(first_id , ids , start_index)
+
+                # Prepare Lookups
+                name_map = dict(FileFolderModel.objects.filter(pk__in=ids).values_list('id', 'name'))
+                hash_map = dict(ShareLink.objects.filter(file_folder_instance_id__in=ids).values_list('file_folder_instance_id', 'shareable_id'))
+
+                # Convert keys to strings for matching
+                name_map = {str(k): v for k, v in name_map.items()}
+                hash_map = {str(k): str(v) for k, v in hash_map.items()}
+
+                # Generate Ordered Strings
+                sharable_path_names = '/'.join([name_map.get(str(i), "") for i in ids])
+                sharable_hash_code = '/'.join([hash_map[str(i)] for i in ids if str(i) in hash_map])
+
+
+                permission_mapping = {'VIEW': 1, 'EDIT': 2, 'ADMIN': 3}
+                highest_permission = max([permission_mapping.get(p, 0) for p in permissions], default=0)
+                
                 permission_data = {
-                    "permission_type" : file_permission_instance.permission_type,
+                    "permission_type" : list(permission_mapping.keys())[list(permission_mapping.values()).index(highest_permission)] if highest_permission > 0 else file_permission_instance.permission_type,
                     "permission_granded_at" : file_permission_instance.permission_granted_at,
-                } 
+                }
+
             elif share_link_instance.password_hash:
                 password = request.data.get("password") #collecting the password from user.
                 if not check_password(password , share_link_instance.password_hash):
@@ -1393,17 +1440,188 @@ def access_shared_file_folder(request):
         context = {
             "request" : request
         }
-        serialized_data = FileFolderShareSerializer(share_link_instance.file_folder_instance , context=context)
-        data = serialized_data.data #getting the first elemt (we have only first...)
-        print(data)
-        if permission_data:
-            data['permission_data'] = permission_data
+
+        if not is_folder:
+            # This Section is used to return the files
+            serialized_data = FileFolderShareSerializer(share_link_instance.file_folder_instance , context=context)
+            data = serialized_data.data #getting the first elemt (we have only first...)
+            
+            if permission_data:
+                data['permission_data'] = permission_data
         
-        return Response({
-            "status_code": 5000,
-            "message": "Successfully fetched resource",
-            "data": data
-            })
+        else:
+            # setting up the permission and breadcrumb details ....................   
+            meta_data = {
+                "permission_details" : permission_data,
+                "breadcrumb_details" : {
+                        "sharable_hash_code" : sharable_hash_code,
+                        "sharable_path_names" : sharable_path_names
+                }    
+            }
+
+            responce_data = {
+                "status_code" : 5000,
+                "message" : "Your Access Granted Successfully",
+                "data" : meta_data
+            }
+            return Response(responce_data)
+            
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+@api_view(['GET'])
+def access_child_of_shared_folder(request):
+    # This function is used to access the child of the shared folder when the user click on the folder in the shared folder listing page and it will return the listing of that folder with the permission data of the user for that folder and also with the breadcrumb details for that folder to show in the frontend while accessing the shared folders.
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        sharable_UUID = request.query_params.get("sharableUUID") #getting the ID from the params of the url.
+        #fetching the shareable instance based on the sharable UUID given in the URL and also fetching the related file_folder_instance in the same query to reduce the number of queries to the database.
+        sharable_instance = ShareLink.objects.select_related('file_folder_instance' , 'owner').filter(shareable_id = sharable_UUID).first() 
+        if sharable_instance is None:
+            responce_data = {
+                "status_code" : 5001,
+                "message" : "FileFolder Instance Not Found.",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        parent_id = request.query_params.get("parentID") # this is the parent ID of the folder which we want to access in the shared folder listing page when we click on the folder to access it and see its content with the permission details and breadcrumb details for that folder.
+
+
+        if parent_id:
+            id_of_parent = hash_ID.decode_id(parent_id) if parent_id else None  #decoding the hashed ID to get the original ID of the parent folder to filter the child instances based on that parent folder ID.
+            if id_of_parent is None:
+                responce_data = {
+                    "status_code" : 5001,
+                    "message" : "Parent Folder Not Found.",
+                    "data" : ""
+                }
+                return Response(responce_data)
+        else:
+            id_of_parent = sharable_instance.file_folder_instance.pk 
+        
+        
+        parent_folder = FileFolderModel.objects.filter(pk = id_of_parent).first() #fetching the parent folder instance based on the decoded ID of the parent folder to check if the parent folder exists or not and also to check if the parent folder is in the path of the shared folder or not.
+        if parent_folder is None:
+            responce_data = {
+                "status_code" : 5001,
+                "message" : "Parent Folder Not Found.",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        #Performing the Test of does the parent folder tried to access the child actually beongs undeer the Shared Instance
+        parent_path = parent_folder.path.split("/") if parent_folder.path else []  #getting the path of the parent folder to check if the parent folder is in the path of the shared folder or not.
+        parent_path.append(str(parent_folder.pk)) #appending the parent folder ID to the path to make the complete path of the parent folder to check if the shared folder instance is in the path of the parent folder or not.
+        Shared_Instance_is_ancestor_of_the_parent_folder = str(sharable_instance.file_folder_instance.pk) in parent_path  #checking if the shared folder instance is in the path of the parent folder or not to make sure that the user is trying to access the child of the shared folder or not.
+        if not Shared_Instance_is_ancestor_of_the_parent_folder:
+            responce_data = {
+                "status_code" : 4002,
+                "message" : "Forbidden ! You Are Trying To Access The Folder Which Is Not Under The Shared Folder.",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+
+        parent_path = parent_path[parent_path.index(str(sharable_instance.file_folder_instance.pk)) : ]    
+        queryset = FileFolderModel.objects.filter(pk__in=parent_path).values('id', 'name')
+        name_map = {str(item['id']): item['name'] for item in queryset}
+
+        ordered_breadcrumbs = []
+
+        for folder_id in parent_path:
+            if folder_id in name_map:
+                ordered_breadcrumbs.append({
+                    "name": name_map[folder_id],
+                    "hashed_id": hash_ID.encode_id(int(folder_id)) if int(folder_id) != sharable_instance.file_folder_instance.pk else None
+                })
+
+        pagination_cursor = request.query_params.get("cursor")
+        # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
+        cache_key = f'sharable_{sharable_instance.file_folder_instance.pk}_{id_of_parent}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
+        print('Generated Cache Key for sharable instance....', cache_key)
+
+        #looking up in cache for the required data.
+        if cache.has_key(cache_key , version=2):
+            print('Fetching from cache version 2', cache_key)
+            return Response(cache.get(cache_key , version=2))
+
+        is_folder = parent_folder.isfolder  #Used to render FOLDERS or SPECIFIC FILE
+
+        if is_folder: 
+            all_child_instances = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder ).select_related('author').order_by('-updated_at')
+            
+            if not all_child_instances.exists():
+                responce_data = {
+                    "status_code" : 5002,
+                    "message" : "No Files/Folders Found",
+                    "data" : "",
+                    "breadcrumb_details" : ordered_breadcrumbs
+                }
+                return Response(responce_data)
+            
+            paginated_files_folders = FileFolderCursorBasedPagination()
+            paginated_instance = paginated_files_folders.paginate_queryset(all_child_instances , request)
+
+            context = {
+                "request" : request,
+            }
+
+            if paginated_instance is not None:
+                serialized_files_and_folders = ChildFileFolderShareSerializer(paginated_instance, many = True , context = context)
+                result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details=ordered_breadcrumbs).data
+                cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
+                print("setting the cached value for shared folder listing....", cache_key)
+                return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details=ordered_breadcrumbs)
+            
+            serialized_files_and_folders = ChildFileFolderShareSerializer(all_child_instances, many = True , context = context)
+            print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
+            responce_data = {
+                    "status_code" : 5000,
+                    "message" : "Folder Created Successfully",
+                    "data" : serialized_files_and_folders.data,
+                    "breadcrumb_details" : ordered_breadcrumbs
+            }
+            
+            cache.set(cache_key, responce_data)
+            return Response(responce_data)
+        else: #Processing the child file inside the shared Instance....................
+            context = {
+                'request' : request
+            }
+            serialized_file = ChildFileFolderShareSerializer(parent_folder , context = context).data
+            responce_data = {
+                "status_code" : 5000,
+                "message" : "Image Fetched Successfully",
+                "data" : serialized_file,
+                "breadcrumb_details" : ordered_breadcrumbs
+            }
+
+            cache.set(cache_key, responce_data ,version=2)
+            return Response(responce_data)
+    
     else:
         responce_data = {
             "status_code" : 4001,
