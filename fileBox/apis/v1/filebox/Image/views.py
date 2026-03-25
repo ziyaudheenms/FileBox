@@ -41,6 +41,7 @@ from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_
 from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
+from ..utils import permission
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
@@ -67,9 +68,13 @@ def uploadImage(request):
         user_id = request_payload['sub']  # user ID
 
         folder_name_info = request.query_params.get("folderID") #if the image is stored inside any folder , we can get the ID of the folder
-        # print(request)
         file = request.data['image']
-        print(file)
+
+        sharable_UUID = request.query_params.get("sharableUUID")
+        parent_hash = request.query_params.get("parentHash")
+
+
+
         file_bytes = file.read()
         file_base64 = base64.b64encode(file_bytes).decode('utf-8')
         filename = file.name
@@ -78,12 +83,52 @@ def uploadImage(request):
         root , extension = os.path.splitext(filename_with_extension)
 
         user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+
         folder = None #initializing the parent folder.
-        if folder_name_info is not None:
+        delete_cache_key = None
+
+        if folder_name_info is not None:  #calculations for if the owner uploads directly
             if FileFolderModel.objects.filter(pk = folder_name_info).exists():
                 folder = FileFolderModel.objects.get(pk = folder_name_info)
+                delete_cache_key = f'*file_folder_list_{user.clerk_user_id}_*'
             else:
-                folder = None
+                folder = None 
+
+        if sharable_UUID is not None:
+            share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            
+            if not share_instance_folder:
+                return Response({"status_code": 5001, "message": "Shared instance not found" , "data" : ""})
+
+            root_folder = share_instance_folder.file_folder_instance
+            permission_granded = None
+
+            if root_folder.author == user:
+                permission_granded = 'OWNER'
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_folder, user_id=user).first()
+                if permission_instance:
+                    ids = (root_folder.path.split("/") if root_folder.path else []) + [str(root_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+
+            if permission_granded in ['EDIT', 'ADMIN', 'OWNER']:
+                if parent_hash:
+                    child_id = hash_ID.decode_id(parent_hash)
+                    child_folder = FileFolderModel.objects.filter(pk=child_id).first()
+                    
+                    path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
+                    if child_folder and str(root_folder.pk) in path_list:
+                        folder = child_folder
+                        delete_cache_key = f'*sharable_{root_folder.pk}_{child_id}_*'
+                    else:
+                        return Response({"status_code": 5001, "message": "Invalid Parent ID"}, status=403)
+                else:
+                    folder = root_folder
+                    delete_cache_key = f'*sharable_{root_folder.pk}_*'
+            else:
+                return Response({"status_code": 5001, "message": "Access for upload denied"}, status=403)
+        
+        
 
         ## Calculations so that to determine the path , handled the edge case of if the parent's path  is none 
         path_to_be_appended = None
@@ -107,26 +152,27 @@ def uploadImage(request):
         )
         #task is queued to work at offload , so that to avoid the smooth fuctioning of api and workflow of the system.
         print(file_instance.pk)
+
+
         if file_instance.is_root:
             print("deleting thr image.........(root)")
             redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
         else:
             print("deleting thr image.........")
-            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)
+            redis_cache.delete_pattern( delete_cache_key, version=2)
 
         queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk)
 
         file_instance.celery_task_ID = queue_worker.id
         file_instance.save()
-    
+
         responce_data = {
             "status_code" : 5000,
             "message" : "Image Added to Queue Successfully, Upload Started",
-            "data" : file_instance.pk
+            "data" : file_instance.pk if folder_name_info else None,
         }
 
         return Response(responce_data)
-
     else:
         responce_data = {
             "status_code" : 4001,
@@ -1559,7 +1605,7 @@ def access_child_of_shared_folder(request):
                 })
 
         pagination_cursor = request.query_params.get("cursor")
-        # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
+        redis_cache.delete_pattern(f'sharable_{sharable_instance.file_folder_instance.pk}_*', version=1)
         cache_key = f'sharable_{sharable_instance.file_folder_instance.pk}_{id_of_parent}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key for sharable instance....', cache_key)
 
