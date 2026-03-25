@@ -94,7 +94,7 @@ def uploadImage(request):
             else:
                 folder = None 
 
-        if sharable_UUID is not None:
+        elif sharable_UUID is not None:
             share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
             
             if not share_instance_folder:
@@ -121,12 +121,15 @@ def uploadImage(request):
                         folder = child_folder
                         delete_cache_key = f'*sharable_{root_folder.pk}_{child_id}_*'
                     else:
-                        return Response({"status_code": 5001, "message": "Invalid Parent ID"}, status=403)
+                        return Response({"status_code": 5001, "message": "Invalid Parent ID"})
                 else:
                     folder = root_folder
                     delete_cache_key = f'*sharable_{root_folder.pk}_*'
             else:
-                return Response({"status_code": 5001, "message": "Access for upload denied"}, status=403)
+                return Response({"status_code": 5001, "message": "Access for upload denied", "data" : ""})
+            
+        else:
+            return Response({"status_code": 5001, "message": "No Record Found" , "data" : ""}) 
         
         
 
@@ -140,7 +143,7 @@ def uploadImage(request):
 
         #creating the dummy record for reference in the frontend()
         file_instance = FileFolderModel.objects.create(
-            author = user,
+            author = user
             name = filename,
             size = filesize,
             is_root = True if folder == None else False,
@@ -159,9 +162,11 @@ def uploadImage(request):
             redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
         else:
             print("deleting thr image.........")
-            redis_cache.delete_pattern( delete_cache_key, version=2)
+            redis_cache.delete_pattern( delete_cache_key, version=2)  #for deleting the shared instance 
+            redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id if folder else None}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)  #clearing the cache of the owner(who shared...)
 
-        queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk)
+
+        queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk ,delete_cache_key)
 
         file_instance.celery_task_ID = queue_worker.id
         file_instance.save()

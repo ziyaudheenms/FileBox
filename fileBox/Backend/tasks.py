@@ -16,7 +16,7 @@ load_dotenv()
 redis_cache: RedisCache = cache # type: ignore
 
 @shared_task
-def upload_image_to_imagekit(filename , filebase64 , file_modelID):
+def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache_key):
 
     try:
         print("Event Started to be uploaded")
@@ -59,7 +59,7 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
                     clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
                     total_image_storage=F('total_image_storage') + file_instance.size
                 )
-                redis_cache.delete_pattern(f'*storage_stat_of_{file_instance.author.clerk_user_id}*', version=1) 
+                redis_cache.delete_pattern(f'*storage_stat_of_{file_instance.parentFolder.author.clerk_user_id}*', version=1)  #clearing the storage of the actually owner's storage where the file sits............
             else:
                 print("Storage instance not found for the user")
 
@@ -77,7 +77,8 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID):
             if file_instance.is_root:
                 redis_cache.delete_pattern(f'*file_folder_list_{file_instance.author.clerk_user_id}_*', version=2)
             else:
-                redis_cache.delete_pattern(f'*file_folder_list_{file_instance.author.clerk_user_id}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)
+                redis_cache.delete_pattern( delete_cache_key, version=2)
+                redis_cache.delete_pattern(f'*file_folder_list_{file_instance.parentFolder.author.clerk_user_id if file_instance.parentFolder else None}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)  #clearing the cache of the owner(who shared...)
 
 
             return {
