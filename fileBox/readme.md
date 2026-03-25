@@ -33,3 +33,4 @@ This PR implements a robust, asynchronous notification system using **Django Cha
 4. **Task:** File upload is triggered; Celery processes the file in the background.
 5. **Broadcast:** Celery sends a message to `user_{id}` via the Channel Layer.
 6. **Push:** Consumer receives the event and sends a JSON payload to the client.
+
