@@ -33,3 +33,5 @@ def generate_signed_url(url , expire_second = 3600):
     }
     )
 
+    return signed_url
+

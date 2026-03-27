@@ -12,6 +12,8 @@ class FileFolderSerializer(serializers.ModelSerializer):
     size = serializers.SerializerMethodField()
     parentFolder = serializers.SerializerMethodField()
     pathnames = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
 
     class Meta:
         model = FileFolderModel
@@ -19,6 +21,8 @@ class FileFolderSerializer(serializers.ModelSerializer):
 
     def get_author(self, instance):
         return instance.author.clerk_user_name
+    def get_profile_image(self, instance):
+        return instance.author.clerk_user_profile_img
     
     def get_size(self, instance):
         if instance.isfolder:
@@ -38,6 +42,11 @@ class FileFolderSerializer(serializers.ModelSerializer):
         ids =  instance.path.split('/') if instance.path else []
         folderNames = FileFolderModel.objects.filter(pk__in =ids).values_list('name', flat=True)
         return '/'.join(folderNames)
+    
+    def get_file_url(self,instance):
+        if instance.file_url is None:
+            return None
+        return iamgekit_signed_URL.generate_signed_url(instance.file_url)
 
 class UserStorageSerializer(serializers.ModelSerializer):
     author = serializers.SerializerMethodField()
@@ -120,6 +129,8 @@ class FileFolderShareSerializer(serializers.ModelSerializer):
     author = serializers.SerializerMethodField()
     size = serializers.SerializerMethodField()
     parentFolder = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+
   
 
     class Meta:
@@ -128,6 +139,9 @@ class FileFolderShareSerializer(serializers.ModelSerializer):
 
     def get_author(self, instance):
         return instance.author.clerk_user_name
+    
+    def get_profile_image(self, instance):
+        return instance.author.clerk_user_profile_img
     
     def get_size(self, instance):
         if instance.isfolder:
@@ -152,6 +166,8 @@ class ChildFileFolderShareSerializer(serializers.ModelSerializer):
     parentFolder = serializers.SerializerMethodField()
     id = serializers.SerializerMethodField()
     file_url = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+
   
 
     class Meta:
@@ -161,6 +177,9 @@ class ChildFileFolderShareSerializer(serializers.ModelSerializer):
     def get_author(self, instance):
         return instance.author.clerk_user_name
     
+    def get_profile_image(self, instance):
+        return instance.author.clerk_user_profile_img
+
     def get_size(self, instance):
         if instance.isfolder:
             total_instance = FileFolderModel.objects.filter(parentFolder=instance , is_trash=False)

@@ -96,25 +96,36 @@ def uploadImage(request):
 
         elif sharable_UUID is not None:
             share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            print("collected the share root folder")
             
             if not share_instance_folder:
                 return Response({"status_code": 5001, "message": "Shared instance not found" , "data" : ""})
 
             root_folder = share_instance_folder.file_folder_instance
             permission_granded = None
+            
 
             if root_folder.author == user:
-                permission_granded = 'OWNER'
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
             else:
                 permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_folder, user_id=user).first()
+                print('collecting the request status of the user')
+
                 if permission_instance:
                     ids = (root_folder.path.split("/") if root_folder.path else []) + [str(root_folder.pk)]
                     permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found"})
 
-            if permission_granded in ['EDIT', 'ADMIN', 'OWNER']:
+            if permission_granded[0] in ['EDIT', 'ADMIN', 'OWNER']:
                 if parent_hash:
+                    print(1)
+
                     child_id = hash_ID.decode_id(parent_hash)
                     child_folder = FileFolderModel.objects.filter(pk=child_id).first()
+                    print(1)
                     
                     path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
                     if child_folder and str(root_folder.pk) in path_list:
@@ -127,9 +138,7 @@ def uploadImage(request):
                     delete_cache_key = f'*sharable_{root_folder.pk}_*'
             else:
                 return Response({"status_code": 5001, "message": "Access for upload denied", "data" : ""})
-            
-        else:
-            return Response({"status_code": 5001, "message": "No Record Found" , "data" : ""}) 
+
         
         
 
@@ -143,7 +152,7 @@ def uploadImage(request):
 
         #creating the dummy record for reference in the frontend()
         file_instance = FileFolderModel.objects.create(
-            author = user
+            author = user,
             name = filename,
             size = filesize,
             is_root = True if folder == None else False,
@@ -157,12 +166,14 @@ def uploadImage(request):
         print(file_instance.pk)
 
 
-        if file_instance.is_root:
+        if file_instance.is_root: #root records can be only made by the origignal owners......
             print("deleting thr image.........(root)")
-            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+            redis_cache.delete_pattern(f'*file_folder_list_{file_instance.author.clerk_user_id}_*', version=2)
         else:
             print("deleting thr image.........")
-            redis_cache.delete_pattern( delete_cache_key, version=2)  #for deleting the shared instance 
+            if delete_cache_key:
+                redis_cache.delete_pattern( delete_cache_key, version=2)  #for deleting the shared instance 
+            
             redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id if folder else None}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)  #clearing the cache of the owner(who shared...)
 
 
@@ -174,7 +185,7 @@ def uploadImage(request):
         responce_data = {
             "status_code" : 5000,
             "message" : "Image Added to Queue Successfully, Upload Started",
-            "data" : file_instance.pk if folder_name_info else None,
+            "data" : hash_ID.encode_id(file_instance.pk) if sharable_UUID else file_instance.pk,            
         }
 
         return Response(responce_data)
@@ -355,15 +366,59 @@ def createFolder(request):
         folder_name_info = request.query_params.get("folderID") # parent folder ID
         folder_name = request.data["name"]
 
+        sharable_UUID = request.query_params.get("sharableUUID")
+        parent_hash = request.query_params.get("parentHash")
+
         print(folder_name_info)
 
         folder = None #initializing the parent folder.
+        delete_cache_key = None
+
         if folder_name_info is not None:
             if FileFolderModel.objects.filter(pk = folder_name_info).exists():
                 folder = FileFolderModel.objects.get(pk = folder_name_info)
             else:
-                print("haloo")
                 folder = None
+        elif sharable_UUID is not None:
+            share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            print("collected the share root folder")
+            
+            if not share_instance_folder:
+                return Response({"status_code": 5001, "message": "Shared instance not found" , "data" : ""})
+
+            root_folder = share_instance_folder.file_folder_instance
+            permission_granded = None
+            
+
+            if root_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_folder, user_id=user).first()
+                print('collecting the request status of the user')
+
+                if permission_instance:
+                    ids = (root_folder.path.split("/") if root_folder.path else []) + [str(root_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found"})
+
+            if permission_granded[0] in ['EDIT', 'ADMIN', 'OWNER']:
+                if parent_hash:
+                    child_id = hash_ID.decode_id(parent_hash)
+                    child_folder = FileFolderModel.objects.filter(pk=child_id).first() 
+                    path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
+                    if child_folder and str(root_folder.pk) in path_list:
+                        folder = child_folder
+                        delete_cache_key = f'*sharable_{root_folder.pk}_{child_id}_*'
+                    else:
+                        return Response({"status_code": 5001, "message": "Invalid Parent ID"})
+                else:
+                    folder = root_folder
+                    delete_cache_key = f'*sharable_{root_folder.pk}_*'
+            else:
+                return Response({"status_code": 5001, "message": "Access for upload denied", "data" : ""})
 
         print(folder)
 
@@ -387,16 +442,19 @@ def createFolder(request):
         
         responce_data = {
                 "status_code" : 5000,
-                "message" : "Fodler Created Successfully",
-                "data" : folder_instance.pk
+                "message" : "folder Created Successfully",
+                "data" : hash_ID.encode_id(folder_instance.pk) if sharable_UUID else folder_instance.pk,
             }
 
         
         redis_cache: RedisCache = cache # type: ignore
-        if folder_name_info is None:
-            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_*', version=2)
+        if folder_instance.is_root:
+            redis_cache.delete_pattern(f'*file_folder_list_{folder_instance.author.clerk_user_id}_*', version=2)
         else:
-            redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{folder_name_info}*', version=2)
+            if delete_cache_key:
+                redis_cache.delete_pattern( delete_cache_key, version=2)
+                cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'
+            redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id}_{folder_instance.parentFolder.pk}*', version=2)
 
         return Response(responce_data)
     else:
@@ -620,6 +678,7 @@ def getAllFileFolders(request):
         # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
         cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key', cache_key)
+        redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}*', version=2)
 
         #looking up in cache for the required data.
         if cache.has_key(cache_key , version=2):
@@ -628,7 +687,7 @@ def getAllFileFolders(request):
         
 
         if parent_folder_id is not None:
-            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id , author = user).order_by('-updated_at')
+            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id ).order_by('-updated_at')
         else:
             all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
 
@@ -1391,7 +1450,9 @@ def access_shared_file_folder(request):
         permission_data = None
         is_folder = True if share_link_instance.file_folder_instance.isfolder else False  #if its folder we have to implement folder listing logic................
         is_owner = True if share_link_instance.file_folder_instance.author == user else False
-
+        #for implementing the breadcrumbs with security......
+        sharable_path_names = None 
+        sharable_hash_code = None
         #Skipping all the checks and conditions for the OWNER......
         if not is_owner:
             if not share_link_instance.is_active:
@@ -1499,15 +1560,22 @@ def access_shared_file_folder(request):
             
             if permission_data:
                 data['permission_data'] = permission_data
+            
+            responce_data = {
+                "status_code" : 5000,
+                "message" : "Your Access Granted Successfully",
+                "data" : data,
+                "bread_crumbs" : {
+                    "sharable_hash_codes" : sharable_hash_code,
+                    "sharable_path_names" : sharable_path_names
+                }
+            }
+            return Response(responce_data)
         
         else:
             # setting up the permission and breadcrumb details ....................   
             meta_data = {
-                "permission_details" : permission_data,
-                "breadcrumb_details" : {
-                        "sharable_hash_code" : sharable_hash_code,
-                        "sharable_path_names" : sharable_path_names
-                }    
+                "permission_details" : permission_data, 
             }
 
             responce_data = {
@@ -1610,7 +1678,7 @@ def access_child_of_shared_folder(request):
                 })
 
         pagination_cursor = request.query_params.get("cursor")
-        redis_cache.delete_pattern(f'sharable_{sharable_instance.file_folder_instance.pk}_*', version=1)
+        redis_cache.delete_pattern(f'sharable_{sharable_instance.file_folder_instance.pk}_*', version=2)
         cache_key = f'sharable_{sharable_instance.file_folder_instance.pk}_{id_of_parent}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key for sharable instance....', cache_key)
 

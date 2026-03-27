@@ -77,7 +77,8 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache
             if file_instance.is_root:
                 redis_cache.delete_pattern(f'*file_folder_list_{file_instance.author.clerk_user_id}_*', version=2)
             else:
-                redis_cache.delete_pattern( delete_cache_key, version=2)
+                if delete_cache_key:
+                    redis_cache.delete_pattern( delete_cache_key, version=2)
                 redis_cache.delete_pattern(f'*file_folder_list_{file_instance.parentFolder.author.clerk_user_id if file_instance.parentFolder else None}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)  #clearing the cache of the owner(who shared...)
 
 
