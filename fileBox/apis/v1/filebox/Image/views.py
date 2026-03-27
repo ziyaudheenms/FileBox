@@ -157,6 +157,7 @@ def uploadImage(request):
             size = filesize,
             is_root = True if folder == None else False,
             path = path_to_be_appended,
+            type_of_file_folder = 'image',
             parentFolder = folder,
             file_url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEpYntNMtkoBOau-IFwoq7wUlivz4VfNir9g&s",
             file_extension = extension,
@@ -678,7 +679,7 @@ def getAllFileFolders(request):
         # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
         cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key', cache_key)
-        redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}*', version=2)
+        # redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}*', version=2)
 
         #looking up in cache for the required data.
         if cache.has_key(cache_key , version=2):
@@ -1063,21 +1064,63 @@ def assign_permission_to_user(request):
             }
             return Response(responce_data)
         
+        file_folder_instance = None
         #updating the function so that admin and owner both can assign the permissions to other users, but the owner will have the permission to assign the admin role to other users 
         fileFolderID = request.query_params.get("fileFolderID")
-        file_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
-        permission_folder = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance , user_id = user).first() #checking if the user have any permission assigned for the filefolder instance or not (check + fetch in one step) if not found , it will give none.
-        if file_instance is not None:
-            is_owner = file_instance.author.clerk_user_id == user_id
-            is_admin = permission_folder.permission_type == 'ADMIN' if permission_folder else False
-
-            if not is_owner and not is_admin:
+        sharable_UUID = request.query_params.get("sharableUUID")
+        hashed_record_id = request.query_params.get("childSharableHash")
+        if fileFolderID:
+            file_folder_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
+            if not file_folder_instance:
                 responce_data = {
-                    "status_code" : 5003,
-                    "message" : "You Have No Rights To Access This Data",
+                    "status_code" : 5001,
+                    "message" : "Folder Not found",
                     "data" : ""
                 }
                 return Response(responce_data)
+
+        # permission_folder = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance , user_id = user).first() #checking if the user have any permission assigned for the filefolder instance or not (check + fetch in one step) if not found , it will give none.
+        
+        elif sharable_UUID:
+            share_record = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            if not share_record:
+                return Response({"status_code": 5001, "message": "You are not assigned to share this." , "data" : ""})
+            root_share_folder = share_record.file_folder_instance
+            permission_granded = None
+
+            if root_share_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_share_folder, user_id=user).first()
+                print('collecting the request status of the user')
+                if permission_instance:
+                    ids = (root_share_folder.path.split("/") if root_share_folder.path else []) + [str(root_share_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found"})
+                
+            if permission_granded[0] in ['ADMIN', 'OWNER']:
+                if hashed_record_id:
+                    child_id = hash_ID.decode_id(hashed_record_id)
+                    child_folder = FileFolderModel.objects.filter(pk=child_id).first()     
+                    path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
+
+                    if child_folder and str(root_share_folder.pk) in path_list:
+                        file_folder_instance = child_folder
+                        # delete_cache_key = f'*sharable_{root_folder.pk}_{child_id}_*'
+                    else:
+                        return Response({"status_code": 5001, "message": "Invalid Record ID"})  
+                else:
+                    file_folder_instance = root_share_folder
+                    # delete_cache_key = f'*sharable_{root_folder.pk}_*'
+            else:
+                return Response({"status_code": 5001, "message": "Access for controlling share denieed", "data" : ""})
+        
+        if file_folder_instance:
+            is_owner = file_folder_instance.author.clerk_user_id == user_id
+            # is_admin = permission_folder.permission_type == 'ADMIN' if permission_folder else False
 
             data_to_assign_permission = request.data['usersToGrandPermission']  #Array of objects that contains the emai and permission to assign permission.
             data_to_remove_permission = request.data['usersToRemovePermission']  #Array of objects that contains the emai and permission to remove them.
@@ -1094,9 +1137,9 @@ def assign_permission_to_user(request):
                         permissions_to_be_allocated = [] #List to hold the permission instances to be created for bulk creation.
                         for item in data_to_assign_permission:
                             email = item['email'].strip()
-                            permission = item['permission'].strip()
+                            permission_to_allocate = item['permission'].strip()
 
-                            if permission not in ['VIEW' , 'EDIT' , 'ADMIN']:
+                            if permission_to_allocate not in ['VIEW' , 'EDIT' , 'ADMIN']:
                                 responce_data = {
                                     "status_code" : 5002,
                                     "message" : "The Given User Role Doesnt Exists !",
@@ -1104,7 +1147,7 @@ def assign_permission_to_user(request):
                                 }
                                 return Response(responce_data)
                             
-                            if permission == 'ADMIN' and not is_owner:
+                            if permission_to_allocate == 'ADMIN' and not is_owner:
                                 responce_data = {
                                     "status_code" : 5002,
                                     "message" : "Only Owner Can Assign Admin Role To Other Users !",
@@ -1126,9 +1169,9 @@ def assign_permission_to_user(request):
                             if email != user.clerk_user_email:
                                 permissions_to_be_allocated.append(
                                     FileFolderPermission(
-                                        fileFolder_Instance_id = file_instance,
+                                        fileFolder_Instance_id = file_folder_instance,
                                         user_id = user_to_assign_permission_clerk_instance,
-                                        permission_type = permission
+                                        permission_type = permission_to_allocate
                                     )
                                 )
                     
@@ -1159,7 +1202,7 @@ def assign_permission_to_user(request):
                     "data" : ""
                 }
            
-                redis_cache.delete_pattern(f'*users_with_permission_{fileFolderID}*', version=2)
+                redis_cache.delete_pattern(f'*users_with_permission_{file_folder_instance.pk}*', version=2)
 
                 return Response(responce_data)
             except Exception as e:
@@ -1207,29 +1250,72 @@ def get_User_With_Permission(request):
             }
             return Response(responce_data)
         
-        fileFolderID = request.query_params.get("fileFolderID")
-        file_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
-        if not file_instance:
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "Opps ! FileFolder Record not found",
-                "data" : ""
-            }
-            return Response(responce_data)
-        
-        user_with_access_cache_key = f"users_with_permission_{fileFolderID}"
+        fileFolderID = request.query_params.get("fileFolderID")  #always number , its send by the actual owner 
+        sharable_UUID = request.query_params.get("sharableUUID")
+        hashed_record_id = request.query_params.get("childSharableHash")
+        file_folder_instance = None  #used to track the Particular Record
+
+        if fileFolderID:
+            file_folder_instance = FileFolderModel.objects.select_related('author').filter(pk=fileFolderID).first()  # By using this we can reduce the number of queries to fetch the author details while fetching the permissions for the filefolder instance (check + fetch in one step) if not found , it will give none.
+            if not file_folder_instance:
+                responce_data = {
+                    "status_code" : 5001,
+                    "message" : "Opps ! FileFolder Record not found",
+                    "data" : ""
+                }
+                return Response(responce_data)
+            
+        elif sharable_UUID:
+            share_record = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            if not share_record:
+                return Response({"status_code": 5001, "message": "You are not assigned to share this." , "data" : ""})
+            root_share_folder = share_record.file_folder_instance
+            permission_granded = None
+
+            if root_share_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_share_folder, user_id=user).first()
+                print('collecting the request status of the user')
+                if permission_instance:
+                    ids = (root_share_folder.path.split("/") if root_share_folder.path else []) + [str(root_share_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found"})
+                
+            if permission_granded[0] in ['ADMIN', 'OWNER']:
+                if hashed_record_id:
+                    child_id = hash_ID.decode_id(hashed_record_id)
+                    child_folder = FileFolderModel.objects.filter(pk=child_id).first()     
+                    path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
+
+                    if child_folder and str(root_share_folder.pk) in path_list:
+                        file_folder_instance = child_folder
+                        # delete_cache_key = f'*sharable_{root_folder.pk}_{child_id}_*'
+                    else:
+                        return Response({"status_code": 5001, "message": "Invalid Record ID"})  
+                else:
+                    file_folder_instance = root_share_folder
+                    # delete_cache_key = f'*sharable_{root_folder.pk}_*'
+            else:
+                return Response({"status_code": 5001, "message": "Access for controlling share denieed", "data" : ""})
+
+   
+        user_with_access_cache_key = f"users_with_permission_{file_folder_instance.pk if file_folder_instance else None}"
         if cache.has_key(user_with_access_cache_key , version=2):
             print("collecting from permission cache....")
             return Response(cache.get(user_with_access_cache_key , version=2))
 
         try:
-            permitted_users_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_instance)
+            permitted_users_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id = file_folder_instance)
             serialized_data = [  #populating it with the author details with permission as owner
                 {
-                "id" : file_instance.author.pk if file_instance else None,
-                "username" : file_instance.author.clerk_user_name if file_instance else None,
-                "email" : file_instance.author.clerk_user_email if file_instance else None,
-                "profile" : file_instance.author.clerk_user_profile_img if file_instance else None,
+                "id" : file_folder_instance.author.pk if file_folder_instance else None,
+                "username" : file_folder_instance.author.clerk_user_name if file_folder_instance else None,
+                "email" : file_folder_instance.author.clerk_user_email if file_folder_instance else None,
+                "profile" : file_folder_instance.author.clerk_user_profile_img if file_folder_instance else None,
                 "permission" : "OWNER"
                 }
             ]
@@ -1252,15 +1338,15 @@ def get_User_With_Permission(request):
             return Response(responce_data)
         except FileFolderPermission.DoesNotExist:
             responce_data = {
-                "status_code" : 5002,
+                "status_code" : 5001,
                 "message" : "Permission Record doesnt found",
                 "data" : ""
             }
             return Response(responce_data)
         except Exception as e:
             responce_data = {
-                "status_code" : 5000,
-                "message" : "Successfully Updated the permissions..",
+                "status_code" : 5001,
+                "message" : "Some error occured in the process...",
                 "error" : e
             }
             return Response(responce_data)
@@ -1272,6 +1358,8 @@ def get_User_With_Permission(request):
         }
         return Response(responce_data)
    
+
+
 @api_view(['POST'])
 def generate_share_link(request):
     request_state = clerk_SDK.authenticate_request(
@@ -1678,7 +1766,7 @@ def access_child_of_shared_folder(request):
                 })
 
         pagination_cursor = request.query_params.get("cursor")
-        redis_cache.delete_pattern(f'sharable_{sharable_instance.file_folder_instance.pk}_*', version=2)
+        # redis_cache.delete_pattern(f'sharable_{sharable_instance.file_folder_instance.pk}_*', version=2)
         cache_key = f'sharable_{sharable_instance.file_folder_instance.pk}_{id_of_parent}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key for sharable instance....', cache_key)
 
