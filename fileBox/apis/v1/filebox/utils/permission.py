@@ -1,6 +1,5 @@
 
-
-from fileBox.Backend.models import FileFolderPermission
+from Backend.models import FileFolderPermission
 
 
 def grand_permission_for_shared_instance(ids , user , file_permission_instance):
