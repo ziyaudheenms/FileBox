@@ -38,6 +38,7 @@ class FileFolderModel(models.Model):
     name = models.TextField(null=False)
     type_of_file_folder = models.CharField(max_length=100 , null=True , blank=True) #used to track the type of the file (image , document , other) if it's a file and will be null if it's a folder
     size = models.BigIntegerField(null=False , default=0) #if the data record is folder , we will dynamically set the size in the  serializer.
+    description = models.TextField(null=True , blank=True , default="") #if we need we can add desciptions..
     uploaded_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -52,7 +53,7 @@ class FileFolderModel(models.Model):
     file_extension = models.TextField(null=True , blank=True) #if it's file we need the extension of the data
     upload_status = models.CharField(max_length=50 , null=True , choices=STATUS_CHOICES , default='PENDING')
     celery_task_ID = models.TextField(null=True , blank=True)
-
+    imageKit_file_id = models.TextField(null=True , blank=True) #used to store the file id returned by imagekit after uploading the image which will be used in future for deleting the image from imagekit when the user deletes the file from filebox or when the user reuploads the file to update the file in imagekit because imagekit does not provide any update API for updating the existing file so we have to delete the existing file and upload the new file to update the file in imagekit.
     #tracking if the file/folder states ....
     is_trash = models.BooleanField(default=False)
     is_favorite = models.BooleanField(default=False)

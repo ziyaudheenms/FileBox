@@ -30,7 +30,7 @@ from clerk_backend_api.security.types import AuthenticateRequestOptions
 from imagekitio import ImageKit
 
 #importing the queue tasks for Celery to work on with
-from Backend.tasks import upload_image_to_imagekit
+from Backend.tasks import delete_image_from_imagekit, upload_image_to_imagekit
 
 #importing the ratelimiting fuctions
 from django_smart_ratelimit import rate_limit
@@ -86,6 +86,7 @@ def uploadImage(request):
 
         folder = None #initializing the parent folder.
         delete_cache_key = None
+        root_folder=None #used to track the shared folder<main>
 
         if folder_name_info is not None:  #calculations for if the owner uploads directly
             if FileFolderModel.objects.filter(pk = folder_name_info).exists():
@@ -178,7 +179,7 @@ def uploadImage(request):
             redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id if folder else None}_{file_instance.parentFolder.pk if file_instance.parentFolder != None else None}*', version=2)  #clearing the cache of the owner(who shared...)
 
 
-        queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk ,delete_cache_key)
+        queue_worker = upload_image_to_imagekit.delay(filename , file_base64 , file_instance.pk ,delete_cache_key , root_folder.author if root_folder else None)
 
         file_instance.celery_task_ID = queue_worker.id
         file_instance.save()
@@ -454,7 +455,6 @@ def createFolder(request):
         else:
             if delete_cache_key:
                 redis_cache.delete_pattern( delete_cache_key, version=2)
-                cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'
             redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id}_{folder_instance.parentFolder.pk}*', version=2)
 
         return Response(responce_data)
@@ -465,54 +465,6 @@ def createFolder(request):
             "data" : ""
         }
         return Response(responce_data)
-
-
-@api_view(['DELETE'])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-})  # used for implementing token bucket algorithm for rate limiting
-def deleteFolderFile(request):
-    # First Lets authenticate the request using clerk
-    request_state = clerk_SDK.authenticate_request(
-        request,
-        AuthenticateRequestOptions(
-            authorized_parties=["http://localhost:3000"]
-        )
-    )
-
-    if request_state.is_signed_in:
-        request_payload = request_state.payload
-        user_id = request_payload['sub']
-
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)  #getting the authenticated author who is creating the folder  
-        folder_file_id = int(request.query_params.get("folderFileID"))
-        if FileFolderModel.objects.filter(pk=folder_file_id , author = user).exists():
-            instance_to_delete = FileFolderModel.objects.get(pk=folder_file_id, author = user)
-            instance_to_delete.delete()
-
-            responce_data = {
-                "status_code" : 5000,
-                "message" : "Fodler/File deleted Successfully",
-                "data" : ""
-            }
-            return Response(responce_data)
-        else:
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "Fodler Not Found",
-                "data" : ""
-            }
-            return Response(responce_data)
-    else:
-        responce_data = {
-            "status_code" : 4001,
-            "message" : "User not authenticated",
-            "data" : ""
-        }
-        return Response(responce_data)
-
 
 @api_view(["GET"])
 @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
@@ -947,7 +899,7 @@ def getStorageDetails(request):
         request_payload = request_state.payload
         user_id = request_payload['sub']
 
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
         if not user:
             responce_data = {
                 "status_code" : 4001,
@@ -957,10 +909,12 @@ def getStorageDetails(request):
             return Response(responce_data)
         
         storage_cache_key = f'storage_stat_of_{user_id}'
+        print(storage_cache_key)
         if cache.has_key(storage_cache_key , version=1):
             print('Fetching from cache version 1(storage stats)')
             return Response(cache.get(storage_cache_key , version=1))
         
+
         storage_instance = ClerkUserStorage.objects.get(author = user)
         if not storage_instance:
             responce_data = {
@@ -973,7 +927,7 @@ def getStorageDetails(request):
                 "request" : request
             }
         serialized_storage_data = UserStorageSerializer(storage_instance, context = context)
-
+        print("setting new cache/.....")
         cache.set(storage_cache_key, serialized_storage_data.data, version=1)
 
         responce_data = {
@@ -1829,6 +1783,258 @@ def access_child_of_shared_folder(request):
             cache.set(cache_key, responce_data ,version=2)
             return Response(responce_data)
     
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+@api_view(['POST'])
+def update_file_meta_data(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        file_id = request.query_params.get("fileID")
+        sharable_UUID = request.query_params.get("sharableUUID")
+        file_hash = request.query_params.get("fileHash")
+
+        file_Instance = None
+        delete_key = None
+
+        if file_id:
+            file_Instance = FileFolderModel.objects.filter(pk = file_id , author = user).first()
+            if not file_Instance:
+                responce_data = {
+                    "status_code" : 5001,
+                    "message" : "file not found",
+                    "data" : ""
+                }
+                return Response(responce_data)
+            
+        elif sharable_UUID is not None:
+            share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            print("collected the share root folder")
+            
+            if not share_instance_folder:
+                return Response({"status_code": 5001, "message": "Shared instance not found" , "data" : ""})
+
+            root_folder = share_instance_folder.file_folder_instance
+            permission_granded = None
+            
+
+            if root_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_folder, user_id=user).first()
+                print('collecting the request status of the user')
+
+                if permission_instance:
+                    ids = (root_folder.path.split("/") if root_folder.path else []) + [str(root_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found"})
+
+            if permission_granded[0] in ['EDIT', 'ADMIN', 'OWNER']:
+                if file_hash:
+                    child_id = hash_ID.decode_id(file_hash)
+                    child_folder = FileFolderModel.objects.filter(pk=child_id).first()
+                    
+                    path_list = child_folder.path.split('/') if child_folder and child_folder.path else []
+                    if child_folder and str(root_folder.pk) in path_list:
+                        file_Instance = child_folder
+                        delete_cache_key = f'*sharable_{root_folder.pk}_{child_folder.parentFolder.pk}_*'   #we need to clear the cache of the parent folder where this respective folder is present.
+
+                    else:
+                        return Response({"status_code": 5001, "message": "Invalid Parent ID"})
+                else:
+                    file_Instance = root_folder
+                    delete_cache_key = f'*sharable_{root_folder.pk}_*'
+            else:
+                return Response({"status_code": 5001, "message": "Access for upload denied", "data" : ""})
+
+        if file_Instance:
+            description = request.data.get("description", None)
+            name = request.data.get("name", None)
+
+            if description:
+                file_Instance.description = description 
+            if name:
+                file_name , extension = os.path.splitext(name)
+                file_Instance.name = f"{file_name}{file_Instance.file_extension}"
+
+                if file_Instance.is_root: #root records can be only made by the origignal owners......
+                    print("deleting thr image.........(root)")
+                    redis_cache.delete_pattern(f'*file_folder_list_{file_Instance.author.clerk_user_id}_*', version=2)
+                else:
+                    print("deleting thr image.........")
+                    if delete_cache_key:
+                        redis_cache.delete_pattern( delete_cache_key, version=2)  #for deleting the shared instance 
+                    redis_cache.delete_pattern(f'*file_folder_list_{file_Instance.author.clerk_user_id}_{file_Instance.parentFolder.pk}*', version=2)  #clearing the cache of the owner(who shared...)
+                        
+            file_Instance.save()
+            responce_data = {
+                    "status_code" : 5000,
+                    "message" : "successfully added the description",
+                    "data" : ""
+            }
+            return Response(responce_data)
+        else:
+            responce_data = {
+                    "status_code" : 5001,
+                    "message" : "file Record not found",
+                    "data" : ""
+            }
+            return Response(responce_data)
+
+
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+@api_view(['DELETE'])
+def delete_filefolderRecord(request):
+    """
+        Only Authors of the respected file folders and owners of the parent folders can only perform the delete action.    
+    """
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        file_folder_id = request.query_params.get("fileFolderID")
+        sharable_UUID = request.query_params.get("sharableUUID")
+        file_hash = request.query_params.get("fileFolderHash")
+
+        print(file_folder_id , sharable_UUID , file_hash)
+
+        file_folder_instance = None
+        can_delete = False #variable which is used to track whther can delete 
+        cache_delete_key = None
+        cache_storage_key = None
+        root_share_folder = None #used to track the shared folder
+
+        if file_folder_id:
+            file_folder_instance = FileFolderModel.objects.filter(pk = file_folder_id).first()
+            if not file_folder_instance:
+                responce_data = {
+                    "status_code" : 5001,
+                    "message" : "file not found",
+                    "data" : ""
+                }
+                return Response(responce_data)
+            
+            if file_folder_instance.author == user :
+                can_delete = True 
+                cache_storage_key = f'storage_stat_of_{file_folder_instance.author.clerk_user_id}',
+            else:
+                can_delete = False
+
+        elif sharable_UUID is not None:
+            share_instance_folder = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_UUID).first()
+            print("collected the share root folder")
+            
+            if not share_instance_folder:
+                return Response({"status_code": 5001, "message": "Shared instance not found" , "data" : ""})
+            
+            cache_storage_key = f'storage_stat_of_{share_instance_folder.file_folder_instance.author.clerk_user_id}',
+            root_share_folder = share_instance_folder.file_folder_instance
+            if file_hash:
+                file_ID = hash_ID.decode_id(file_hash)
+                file_folder_instance = FileFolderModel.objects.filter(pk = file_ID).first()
+                path_list = file_folder_instance.path.split('/') if file_folder_instance and file_folder_instance.path else []
+                if file_folder_instance and str(share_instance_folder.file_folder_instance.pk) in path_list:
+                    if file_folder_instance.author == user or root_share_folder.author == user:
+                        can_delete = True
+                        cache_delete_key = f'*sharable_{root_share_folder.pk}_{file_folder_instance.parentFolder.pk}*'
+                else:
+                    return Response({"status_code": 5001, "message": "Invalid Parent ID"})
+            else:
+                file_folder_instance = root_share_folder
+                if file_folder_instance.author == user:
+                    can_delete = True
+                cache_delete_key = f'*sharable_{file_folder_instance.pk}_*'
+        
+        if can_delete and file_folder_instance:
+            file_id = file_folder_instance.imageKit_file_id if not file_folder_instance.isfolder else None # we need the file URL to delete the file from the storage service like S3 or any other service we are using for storing the files because for folders we are not storing any file so we can skip the deletion from the storage service in case of folders.
+            if file_folder_instance.is_root: #root records can be only made by the origignal owners......
+                print("deleting thr image.........(root)")
+                redis_cache.delete_pattern(f'*file_folder_list_{file_folder_instance.author.clerk_user_id}_*', version=2)
+            else:
+                if cache_delete_key:
+                    redis_cache.delete_pattern( cache_delete_key, version=2)  #for deleting the shared instance 
+                redis_cache.delete_pattern(f'*file_folder_list_{file_folder_instance.author.clerk_user_id}_{file_folder_instance.parentFolder.pk}*', version=2)  #clearing the cache of the owner(who shared...)
+            print(cache_storage_key[0])
+
+            file_folder_instance.delete()
+            #updating the storage stats of the user based on the deleted file size
+            if root_share_folder:
+                print('updating the root_share_folder')
+                ClerkUserStorage.objects.filter(author=root_share_folder.author).update(
+                            clerk_user_used_storage=F('clerk_user_used_storage') - file_folder_instance.size,
+                            total_image_storage=F('total_image_storage') - file_folder_instance.size
+                )
+            else:
+                print('updating the user"s storage stats')
+                ClerkUserStorage.objects.filter(author=file_folder_instance.author).update(
+                            clerk_user_used_storage=F('clerk_user_used_storage') - file_folder_instance.size,
+                            total_image_storage=F('total_image_storage') - file_folder_instance.size
+                )
+
+
+            redis_cache.delete_pattern(cache_storage_key[0], version=1) #deleting the storage capacity....
+
+            if file_id:
+                delete_image_from_imagekit.delay(file_id) #deleting the image from the storage service asynchronously using celery to avoid any delay in the API response because of the deletion process from the storage service which can take some time depending on the size of the file and the response time of the storage service. We are passing only the file ID to the celery task to delete the image from the storage service because we can directly delete the image from the storage service using the file ID without needing any other information about the file.
+
+            responce_data = {
+            "status_code" : 5000,
+            "message" : "Successfully deleted the record",
+            "data" : ""
+            }
+            return Response(responce_data)
+    
+        else:
+            responce_data = {
+            "status_code" : 5001,
+            "message" : "Can't delete the record",
+            "data" : ""
+            }
+            return Response(responce_data)
     else:
         responce_data = {
             "status_code" : 4001,
