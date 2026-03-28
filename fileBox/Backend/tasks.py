@@ -15,9 +15,23 @@ from dotenv import load_dotenv
 load_dotenv()
 redis_cache: RedisCache = cache # type: ignore
 
-@shared_task
-def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache_key):
 
+
+#Initializing the imagekit SDK
+imagekit = ImageKit(
+                private_key=os.getenv("IMAGEKIT_PRIVATE_KEY"),
+                public_key=os.getenv("IMAGEKIT_PUBLIC_KEY"),
+                url_endpoint=os.getenv("IMAGEKIT_URL_ENDPOINT")
+            )
+
+
+
+
+
+
+
+@shared_task
+def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache_key , shared_instance_owner):
     try:
         print("Event Started to be uploaded")
         print(file_modelID)
@@ -34,12 +48,6 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache
     
     try:
         print("Initializing the imagekit SDK")
-        #Initializing the imagekit SDK
-        imagekit = ImageKit(
-                private_key=os.getenv("IMAGEKIT_PRIVATE_KEY"),
-                public_key=os.getenv("IMAGEKIT_PUBLIC_KEY"),
-                url_endpoint=os.getenv("IMAGEKIT_URL_ENDPOINT")
-            )
         print("Trying to Upload the image")
         #Uploading the image to imagekit SDK
         uploaded_image = imagekit.upload(
@@ -52,16 +60,30 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache
             file_instance.file_url = uploaded_image.url
             file_instance.size = int(uploaded_image.size / 1024)    #Converting the size of the image into kbs
             file_instance.upload_status = 'UPLOADED'   # Updating the status of the Image
-            file_instance.save()
+            file_instance.imageKit_file_id = uploaded_image.file_id
+            file_instance.save(update_fields=[
+                'file_url', 'size', 'upload_status', 'imageKit_file_id'
+            ])
             # updating the storage stats of the user based on the uploaded file size
-            if ClerkUserStorage.objects.filter(author=file_instance.author).exists():
-                ClerkUserStorage.objects.filter(author=file_instance.author).update(
-                    clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
-                    total_image_storage=F('total_image_storage') + file_instance.size
-                )
-                redis_cache.delete_pattern(f'*storage_stat_of_{file_instance.parentFolder.author.clerk_user_id}*', version=1)  #clearing the storage of the actually owner's storage where the file sits............
-            else:
-                print("Storage instance not found for the user")
+            if shared_instance_owner:
+                if ClerkUserStorage.objects.filter(author=shared_instance_owner).exists():
+                    ClerkUserStorage.objects.filter(author=shared_instance_owner.author).update(
+                        clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
+                        total_image_storage=F('total_image_storage') + file_instance.size
+                    )
+                    redis_cache.delete_pattern(f'*storage_stat_of_{shared_instance_owner}*', version=1)  #clearing the storage of the actually owner's storage where the file sits............
+                else:
+                    print("Storage instance not found for the user")
+
+            else:                
+                if ClerkUserStorage.objects.filter(author=file_instance.author).exists():
+                    ClerkUserStorage.objects.filter(author=file_instance.author).update(
+                        clerk_user_used_storage=F('clerk_user_used_storage') + file_instance.size,
+                        total_image_storage=F('total_image_storage') + file_instance.size
+                    )
+                    redis_cache.delete_pattern(f'*storage_stat_of_{file_instance.author.clerk_user_id}*', version=1)  #clearing the storage of the actually owner's storage where the file sits............
+                else:
+                    print("Storage instance not found for the user")
 
             channel_layer = get_channel_layer()
             async_to_sync(channel_layer.group_send)(
@@ -100,3 +122,17 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache
                 "message" : "Image Upload Failed",
                 "data" : "",
             }
+
+
+
+@shared_task
+def delete_image_from_imagekit(imagekit_file_ID):
+    if imagekit_file_ID:
+        try:
+            imagekit.delete_file(imagekit_file_ID)
+            print('successfully deleted the image from the storage service')
+        except Exception as e:
+            print("Error occured while deleting the image from the storage service", e)
+            print(e)
+    
+    

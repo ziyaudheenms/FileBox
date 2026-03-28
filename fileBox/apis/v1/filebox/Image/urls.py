@@ -5,7 +5,7 @@ from . import views
 urlpatterns = [
     path('Create/Image/', views.uploadImage), #used to upload the image
     path('Create/Folder/', views.createFolder), #api endpoint to create the folder
-    path('delete/FolderFile/', views.deleteFolderFile), # api endpoint for deleteing the folder or file (pk id is sent through params)
+    path('delete/FolderFile/', views.delete_filefolderRecord), # api endpoint for deleteing the folder or file (pk id is sent through params)
     path('trash/FolderFile/', views.isTrash), #api endpoint for updating whether the file/folder is in trash or not
     path('favorite/FolderFile/', views.isFavorite), #api endpoint for updating whether the file/folder is in favorite or not
     path('test/' , views.testFunction),
