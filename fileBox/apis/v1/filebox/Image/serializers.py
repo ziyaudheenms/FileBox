@@ -202,3 +202,31 @@ class ChildFileFolderShareSerializer(serializers.ModelSerializer):
         if instance.file_url is None:
             return None
         return iamgekit_signed_URL.generate_signed_url(instance.file_url)
+    
+
+
+
+class ShareChildFileFolderShareSerializer(serializers.ModelSerializer):
+    
+    parentFolder = serializers.SerializerMethodField()
+    id = serializers.SerializerMethodField()
+
+  
+
+    class Meta:
+        model = FileFolderModel
+        fields = ['name', 'type_of_file_folder','updated_at']
+
+        
+    def get_parentFolder(self, instance):
+        if instance.is_root:
+            return None
+        else:
+            return instance.parentFolder.name
+        
+    def get_id(self, instance):
+        encoded_id = hash_ID.encode_id(instance.pk)
+        if encoded_id is  None:
+            return instance.pk
+        return encoded_id
+    

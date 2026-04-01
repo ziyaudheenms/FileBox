@@ -38,7 +38,7 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
+from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
 from ..utils import permission
@@ -2035,6 +2035,82 @@ def delete_filefolderRecord(request):
             "data" : ""
             }
             return Response(responce_data)
+    else:
+        responce_data = {
+            "status_code" : 4001,
+            "message" : "User not authenticated",
+            "data" : ""
+        }
+        return Response(responce_data)
+
+
+
+# FUNCTIONS FOR MOVE FEATURE..........................................
+
+@api_view(['GET'])
+def list_the_possible_folders_to_move(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        if not user:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        folder_id_hashed = request.query_params.get("hashedFolderID")
+        folder_id = hash_ID.decode_id(folder_id_hashed) if folder_id_hashed else None
+        all_child_instances = None  #collecting the childs to show
+        ordered_breadcrumbs = []
+        if folder_id:
+            folder_instance = FileFolderModel.objects.filter(pk = folder_id).first()
+            if folder_instance:
+                path = folder_instance.path.split("/") if folder_instance.path else []
+                path.append(str(folder_instance.pk))
+                queryset = FileFolderModel.objects.filter(pk__in=path).values('id', 'name')
+                name_map = {str(item['id']): item['name'] for item in queryset}
+
+                for folder_id in path:
+                    if folder_id in name_map:
+                        ordered_breadcrumbs.append({
+                            "name": name_map[folder_id],
+                            "hashed_id": hash_ID.encode_id(int(folder_id)) })
+                all_child_instances = FileFolderModel.objects.filter(parentFolder = folder_instance , is_trash=False)
+
+            else:
+                responce_data = {
+                "status_code" : 5001,
+                "message" : "No folder found .....",
+                "data" : ""
+            }
+            return Response(responce_data)
+        else:
+            all_child_instances = FileFolderModel.objects.filter(parentFolder = None , is_trash=False , author = user)
+
+        context = {
+            'request' : request
+        }
+
+        if all_child_instances:
+            serialized_data = ShareChildFileFolderShareSerializer(all_child_instances , many=True , context=context).data
+
+            response_data = {
+            'status_code' : 5000,
+            'message' : "fetched the details",
+            "data" : serialized_data,
+            "breadcrumbs" : ordered_breadcrumbs
+            }
+            return Response(response_data)
+        
     else:
         responce_data = {
             "status_code" : 4001,
