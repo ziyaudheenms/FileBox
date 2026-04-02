@@ -45,7 +45,7 @@ class FileFolderModel(models.Model):
     isfolder = models.BooleanField(default=False) # Used to track whether its a folder or file
     is_root = models.BooleanField(default=True)  #used to track whether the Folder is a root folder or a sub folder
     parentFolder = models.ForeignKey("self" , on_delete=models.CASCADE, null=True , blank=True) #if the data is in the root structure , we dont have a parent folder other wise store the id of the parent
-    path = models.TextField(null=True, blank=True, default=None) #used to track the parent structure  (will be null if is_root is True)
+    path = models.TextField(null=True, blank=True, default=None , db_index=True) #used to track the parent structure  (will be null if is_root is True)
 
 
     #if the data is a file we need all this data
