@@ -22,5 +22,8 @@ urlpatterns = [
     path('get/sharableLink' , views.generate_share_link),
     path('get/sharedFileFolder' , views.access_shared_file_folder),
     path('get/sharedFileFolder/child' , views.access_child_of_shared_folder),
+    path('move/availableRecords' , views.list_the_possible_folders_to_move),
+    path('move/' , views.move_file_folder),
+    path('copy/' , views.copy_file_folder),
 ]
                             

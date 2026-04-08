@@ -1,8 +1,12 @@
+import copy
 import os
 import base64
 import io
+import random
+import string
 from turtle import st
 from celery import shared_task
+from h11 import Response
 from imagekitio import ImageKit
 from Backend.models import ClerkUserProfile, ClerkUserStorage, FileFolderModel
 from channels.layers import get_channel_layer
@@ -11,6 +15,8 @@ from django.db.models import F
 from django.core.cache import cache
 from django_redis.cache import RedisCache
 from dotenv import load_dotenv
+from django.db import transaction
+
 
 load_dotenv()
 redis_cache: RedisCache = cache # type: ignore
@@ -129,10 +135,89 @@ def upload_image_to_imagekit(filename , filebase64 , file_modelID , delete_cache
 def delete_image_from_imagekit(imagekit_file_ID):
     if imagekit_file_ID:
         try:
-            imagekit.delete_file(imagekit_file_ID)
-            print('successfully deleted the image from the storage service')
+            if FileFolderModel.objects.filter(imageKit_file_id = imagekit_file_ID).exists():   #Since I am implemeting the copy functionality , there may be chances that more copies contain same url , so will delete the url only when no file is present 
+                print('there is a record which points to this image_kit_ID')
+            else:
+                imagekit.delete_file(imagekit_file_ID)
+                print('successfully deleted the image from the storage service')
         except Exception as e:
             print("Error occured while deleting the image from the storage service", e)
             print(e)
+    
+
+@shared_task
+def implement_copy_of_records(children_of_current_source_instance_id , target_level_id , storage_space_required , author_id ):
+
+    target_folder_instance = FileFolderModel.objects.filter(pk = target_level_id).first() if target_level_id else None
+    child = FileFolderModel.objects.filter(pk = children_of_current_source_instance_id).first()
+    author = ClerkUserProfile.objects.filter(clerk_user_id = author_id).first()
+  
+    if not author:
+        return {"status_code": 5001, "message": "User profile not found"}
+        
+    print(target_folder_instance , child , author)
+
+    with transaction.atomic():
+        print("entered")
+        def recursive_record_copy(child_instance , target_parent): 
+            print("starting")
+            copied_instance = copy.copy(child_instance)
+            copied_instance.pk = None
+            copied_instance.author = author
+            print("set the path")
+            new_path = f"{target_parent.path or ''}/{target_parent.pk}".strip("/") if target_parent else None
+            copied_instance.path = new_path
+            copied_instance.parentFolder = target_parent
+            copied_instance.is_root = True if target_parent is None else False
+            print("set the essential details")
+            if FileFolderModel.objects.filter(parentFolder = target_parent , name = child_instance.name).exists():
+                random_suffix = ''.join(random.choices(string.digits, k=4))
+                copied_instance.name = child_instance.name + f"_{random_suffix}"
+                print("set the updatde name")
+            else:
+                copied_instance.name = child_instance.name 
+                print("set the stick with old name")
+            copied_instance.save()
+
+            if child_instance.isfolder:
+                print("set the grandcho=ild")
+                grandchildren = FileFolderModel.objects.filter(parentFolder = child_instance)
+                for grandchild in grandchildren:
+                    print(grandchild)
+                    recursive_record_copy(grandchild , copied_instance)
+
+        
+        recursive_record_copy(child , target_folder_instance)
+
+        
+        if ClerkUserStorage.objects.filter(author=author).exists():       
+            ClerkUserStorage.objects.filter(author=author).update(
+                clerk_user_used_storage=F('clerk_user_used_storage') + storage_space_required,
+                total_image_storage=F('total_image_storage') + storage_space_required
+            )
+            redis_cache.delete_pattern(f'*storage_stat_of_{author_id}*', version=1)  #clearing the storage of the actually owner's storage where the file sits............
+        else :
+            return {
+                "status_code" : 5001,
+                "message" : "storage instance not found",
+                "data" : "",
+            }
+        
+        if target_level_id:
+            redis_cache.delete_pattern(f'*file_folder_list_{author_id}_{target_level_id}*', version=2)  #clearing the specific folder
+        else:
+            redis_cache.delete_pattern(f'*file_folder_list_{author_id}*', version=2)  #clearing the rooot
+        
+        return {
+                "status_code" : 5000,
+                "message" : "Image Successfully Uploaded",
+                "data" : "",
+            }
+    
+
+    
+
+    
+
     
     

@@ -1,14 +1,21 @@
+import copy
+from email.policy import default
+from math import e
 import os
 import base64
 import shutil
 from sqlite3 import Cursor
+from sre_compile import isstring
+from sys import version
 from tkinter import NO, TRUE
 from attr import has
 from click import File
-from django.db import transaction
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import F
 from django.core.exceptions import ValidationError
+from django.db.models import Q, Value
+from django.db.models.functions import Replace
+from django.db import transaction, models
 # importing django cache system 
 from django.core.cache import cache
 from django.shortcuts import get_object_or_404
@@ -18,6 +25,7 @@ from django_redis.cache import RedisCache
 from django.conf import settings
 from dotenv import load_dotenv
 from httpx import delete
+import pkg_resources
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 
@@ -30,7 +38,7 @@ from clerk_backend_api.security.types import AuthenticateRequestOptions
 from imagekitio import ImageKit
 
 #importing the queue tasks for Celery to work on with
-from Backend.tasks import delete_image_from_imagekit, upload_image_to_imagekit
+from Backend.tasks import delete_image_from_imagekit, implement_copy_of_records, upload_image_to_imagekit
 
 #importing the ratelimiting fuctions
 from django_smart_ratelimit import rate_limit
@@ -38,10 +46,10 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
+from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
-from ..utils import permission
+from ..utils import permission , copyToolkit
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
@@ -2042,3 +2050,365 @@ def delete_filefolderRecord(request):
             "data" : ""
         }
         return Response(responce_data)
+
+
+
+# FUNCTIONS FOR MOVE FEATURE..........................................
+
+@api_view(['GET'])
+def list_the_possible_folders_to_move(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+        folder_id_hashed = request.query_params.get("hashedFolderID")
+        folder_id = hash_ID.decode_id(folder_id_hashed) if folder_id_hashed else None
+        all_child_instances = None  #collecting the childs to show
+        ordered_breadcrumbs = []
+
+        if folder_id:
+            folder_instance = FileFolderModel.objects.filter(pk = folder_id , is_trash=False , author= user).first()
+            if folder_instance:
+                path = folder_instance.path.split("/") if folder_instance.path else []
+                path.append(str(folder_instance.pk))
+
+                queryset = FileFolderModel.objects.filter(pk__in=path).values('id', 'name')
+                name_map = {str(item['id']): item['name'] for item in queryset}
+
+                for folder_id in path:
+                    if folder_id in name_map:
+                        ordered_breadcrumbs.append({
+                            "name": name_map[folder_id],
+                            "hashed_id": hash_ID.encode_id(int(folder_id)) })
+                        
+                all_child_instances = FileFolderModel.objects.filter(parentFolder = folder_instance , is_trash=False)
+            else:
+                responce_data = {
+                "status_code" : 5001,
+                "message" : "No folder found .....",
+                "data" : ""
+                }
+                return Response(responce_data)
+        
+        else:
+            all_child_instances = FileFolderModel.objects.filter(parentFolder = None , is_trash=False , author = user)  #collects all the root file folders
+
+        context = {
+            'request' : request
+        }
+
+        serialized_data = ShareChildFileFolderShareSerializer(all_child_instances , many=True , context=context).data
+
+        responce_data = {
+            'status_code' : 5000,
+            'message' : 'fetched the details',
+            'data' : serialized_data,
+            'breadcrumb_details' : ordered_breadcrumbs
+        }
+
+        return Response(responce_data)
+        
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)
+
+@api_view(['POST'])
+def move_file_folder(request):
+    # This function is used to move the file folder from one location to another location in the file folder structure and also to move the shared instance of the file folder if it is shared and also to update the cache accordingly for the owner and the shared instance if it is shared.
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+
+
+        target_folder_hashed_id = request.query_params.get("targetFolderHashedID") #the place where the record will be moved -> ALWAYS FOLDER , will be none for if its root
+        source_record_hashed_id = request.query_params.get("sourceRecordHashedID") #the source (record ) that is to be moved
+        
+
+        target_folder_id = hash_ID.decode_id(target_folder_hashed_id) 
+        source_record_id = source_record_hashed_id
+       
+
+        with transaction.atomic():
+            if target_folder_id:  #calculations for placing the Record inside a new folder.
+                if source_record_id and target_folder_id != source_record_id:    
+                    ids = [int(target_folder_id), int(source_record_id)] 
+                    ids = sorted(ids)
+
+                    query_set = FileFolderModel.objects.select_for_update().filter(pk__in=ids, author=user)
+                    query_map = {item.pk: item for item in query_set}
+
+                    target_folder_instance = query_map.get(int(target_folder_id)) 
+                    source_record_instance = query_map.get(int(source_record_id))
+
+                    if not target_folder_instance.isfolder:  #checking if the provided target record is actually a folder or not because we can move only in folders not in files and if it is not a folder we will return an error message.
+                        responce_data = {
+                            "status_code" : 5001,
+                            "message" : "Invalid Move Operation. It's not a folder",
+                            "data" : ""
+                        }
+                        return Response(responce_data)
+                    
+                    
+                    target_path_list = target_folder_instance.path.split("/") if target_folder_instance.path else []
+                    if str(source_record_id) in target_path_list or str(source_record_id) == str(target_folder_id):
+                        responce_data = {
+                            "status_code": 5001,
+                            "message": "Invalid Move. You cannot move a folder into itself or its own subfolder.",
+                            "data": ""
+                        }
+                        return Response(responce_data)
+
+                    #setting the path for the source record based on the new location
+                    new_path_for_source = f'{target_folder_instance.path}/{target_folder_instance.pk}' if target_folder_instance.path else f'{target_folder_instance.pk}'
+                    
+                    old_path_of_source_used_in_child = f'{source_record_instance.path}/{source_record_instance.pk}' if source_record_instance.path else f'{source_record_instance.pk}' #this is used to filter the child records of the source record to update their path based on the new location of the source record after the move operation.
+
+
+                    search_prefix = f"{source_record_instance.path}/" if source_record_instance.path else ""
+                    replace_prefix = f"{target_folder_instance.path}/{target_folder_instance.pk}/" if target_folder_instance.path else f"{target_folder_instance.pk}/"
+
+
+                    #single SQL quey
+                    FileFolderModel.objects.filter(
+                        Q(pk=source_record_id) | Q(path__startswith=old_path_of_source_used_in_child)
+                    ).update(
+                        path=models.Case(
+                            models.When(pk=source_record_id, then=Value(new_path_for_source)),
+                            default=Replace('path', Value(search_prefix), Value(replace_prefix)),
+                            output_field=models.TextField()
+                        ),
+                        parentFolder=models.Case(
+                            # Use the ID (PK), not the instance object
+                            models.When(pk=source_record_id, then=Value(target_folder_id) ),
+                            default=models.F('parentFolder'),
+                            output_field=models.IntegerField() # Use the field type of your PK (usually Integer)
+                        ),
+                        is_root=models.Case(
+                            # For the source, check if we just moved it to Root
+                            models.When(pk=source_record_id, then=Value(target_folder_id is None)),
+                            # For children, their is_root remains False (they are not root)
+                            default=Value(False),
+                            output_field=models.BooleanField()
+                        )
+                    )
+                    
+
+                    # CACHE MANAGMENT.........................................
+
+                    redis_cache.delete_pattern(f'*file_folder_list_{source_record_instance.author.clerk_user_id}_{target_folder_id}*', version=2)
+
+                    if source_record_instance.parentFolder:
+                        redis_cache.delete_pattern(f'*file_folder_list_{source_record_instance.author.clerk_user_id}_{source_record_instance.parentFolder}*', version=2)
+                    else:
+                        redis_cache.delete_pattern(f'*file_folder_list_{source_record_instance.author.clerk_user_id}*', version=2)
+
+                    redis_cache.delete_pattern(f'*sharable_{source_record_id}_*' , version=2)
+                    redis_cache.delete_pattern(f'*sharable_{target_folder_id}_*' , version=2)
+
+
+                    responce_data = {
+                        'status_code' : 5000,
+                        'message' : 'Moved the record successfully',
+                        'data' : ''
+                    }
+                    return Response(responce_data)
+            
+            else:
+                    # used for copying the record to the root structure from any folder because in root structure we dont have any parent folder so we will set the parent folder to null and also update the path to null because path is used to track the parent structure and if there is no parent then there is no need of path and also we need to make sure that the record is not moved to the same location because if we move the record to the same location then there will be no change in the path and it will create a loop in the path which will cause an infinite loop in the code when we try to access the child records of that record because it will keep on adding the same record ID in the path and it will never end and it will cause a crash in the code.
+                source_record_instance = FileFolderModel.objects.select_for_update().filter(pk = source_record_id, author=user).first()
+
+                if source_record_instance is None:
+                    responce_data = {
+                        'status_code' : 5001,
+                        'message' : 'Source record not found',
+                        'data' : ''
+                    }
+                    return Response(responce_data)
+                
+
+                #setting the path for the source record based on the new location
+                new_path_for_source = None
+                
+                old_path_of_source_used_in_child = f'{source_record_instance.path}/{source_record_instance.pk}' if source_record_instance.path else f'{source_record_instance.pk}' #this is used to filter the child records of the source record to update their path based on the new location of the source record after the move operation.
+                search_prefix = f"{source_record_instance.path}/" if source_record_instance.path else ""
+                replace_prefix = ""  #since we are making it into root.
+
+                #single SQL quey
+                FileFolderModel.objects.filter(
+                    Q(pk=source_record_id) | Q(path__startswith=old_path_of_source_used_in_child)
+                ).update(
+                    path=models.Case(
+                        models.When(pk=source_record_id, then=Value(None)), #since we are making it into root so path will be null for the source record and for the child records the path will be updated based on the new location of the source record after the move operation.
+                        default=Replace('path', Value(search_prefix), Value(replace_prefix)),
+                        output_field=models.TextField()
+                    ),
+                    parentFolder=models.Case(
+                        # Use the ID (PK), not the instance object
+                        models.When(pk=source_record_id, then=Value(None)),
+                        default=models.F('parentFolder'),
+                        output_field=models.IntegerField() # Use the field type of your PK (usually Integer)
+                    ),
+                    is_root=models.Case(
+                        # For the source, check if we just moved it to Root
+                        models.When(pk=source_record_id, then=Value(True)),
+                        # For children, their is_root remains False (they are not root)
+                        default=Value(False),
+                        output_field=models.BooleanField()
+                    )
+                )
+
+                # deleting down the outdated root cache
+                redis_cache.delete_pattern(f'*file_folder_list_{source_record_instance.author.clerk_user_id}*', version=2)
+                responce_data = {
+                    'status_code' : 5000,
+                    'message' : 'moved to root successfully',
+                    'data' : ''
+                }
+                return Response(responce_data)
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)
+
+@api_view(['POST'])
+def copy_file_folder(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        target_folder_hashed_id = request.query_params.get("targetFolderHashedID") #the place where the record will be moved -> ALWAYS FOLDER , will be none for if its root
+        source_record_hashed_id = request.query_params.get("sourceRecordHashedID") #the source (record ) that is to be moved
+        sharable_uuid_of_main_resource = request.query_params.get("sharableUUID")
+
+        target_folder_id = hash_ID.decode_id(target_folder_hashed_id)
+        source_record_id = source_record_hashed_id if isinstance(source_record_hashed_id , int) else hash_ID.decode_id(source_record_hashed_id) #native user uses there DB ID where as shared will use hashed one which will be decoded
+
+        # Checking the permission status
+        if sharable_uuid_of_main_resource:
+            share_record = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_uuid_of_main_resource).first()
+            if not share_record:
+                return Response({"status_code": 5001, "message": "You are not assigned to share this." , "data" : ""})
+            root_share_folder = share_record.file_folder_instance
+            permission_granded = None
+
+            if root_share_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_share_folder, user_id=user).first()
+                print('collecting the request status of the user')
+                if permission_instance:
+                    ids = (root_share_folder.path.split("/") if root_share_folder.path else []) + [str(root_share_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found" , "data": ""})
+                
+            if permission_granded[0] not in ['EDIT' , 'ADMIN', 'OWNER']:
+                return Response({"status_code": 5001, "message": "You cant create a copy" , "data": ""})
+        
+        if source_record_id:
+            print(source_record_id , source_record_hashed_id)
+            ids = [int(source_record_id)]
+            print(ids)
+            record_context = FileFolderModel.objects.select_for_update().filter(pk__in=ids)
+            record_map = {item.pk: item for item in record_context}
+            print(record_map)
+            source_record_instance = record_map.get(int(source_record_id))
+            print(source_record_instance)
+            if source_record_instance is None:
+                responce_data = {
+                    'status_code' : 5001,
+                    'message' : 'Source record not found',
+                    'data' : ''
+                }
+                return Response(responce_data)
+            
+            required_memory_space = copyToolkit.calculate_total_space_required(source_record_instance) if source_record_instance.isfolder else source_record_instance.size 
+            user_storage = ClerkUserStorage.objects.filter(author=user).first()
+            if not user_storage:
+                responce_data = {
+                    'status_code' : 5001,
+                    'message' : 'User doesnt have storage record',
+                    'data' : ''
+                }
+                return Response(responce_data)
+            
+            available_storage_space = user_storage.clerk_user_storage_limit - user_storage.clerk_user_used_storage
+            if available_storage_space < required_memory_space:
+                responce_data = {
+                    'status_code' : 5001,
+                    'message' : 'Not enough storage space to copy the record',
+                    'data' : ''
+                }
+                return Response(responce_data)
+            
+            print("off loading")
+            copy_engine = implement_copy_of_records.delay(source_record_id , target_folder_id , required_memory_space , user.clerk_user_id )
+            print("off loading")
+            responce_data = {
+                'status_code' : 5000,
+                'message' : 'Added to the queue system , will be copied in sometimes',
+                'data' : ''
+            }
+            return Response(responce_data)
+
+
+
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)
+       

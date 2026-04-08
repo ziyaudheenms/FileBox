@@ -2,7 +2,7 @@ from rest_framework import serializers
 from Backend.models import FileFolderModel , ClerkUserStorage , ClerkUserProfile, ShareLink
 from ..hashDependency import hash_ID
 from ..SignedURL import iamgekit_signed_URL
-
+from django.contrib.humanize.templatetags.humanize import naturaltime
 
 
 
@@ -130,6 +130,7 @@ class FileFolderShareSerializer(serializers.ModelSerializer):
     size = serializers.SerializerMethodField()
     parentFolder = serializers.SerializerMethodField()
     profile_image = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
 
   
 
@@ -157,6 +158,10 @@ class FileFolderShareSerializer(serializers.ModelSerializer):
         else:
             return instance.parentFolder.name
         
+    def get_file_url(self,instance):
+        if instance.file_url is None:
+            return None
+        return iamgekit_signed_URL.generate_signed_url(instance.file_url)
 
 
 class ChildFileFolderShareSerializer(serializers.ModelSerializer):
@@ -202,3 +207,25 @@ class ChildFileFolderShareSerializer(serializers.ModelSerializer):
         if instance.file_url is None:
             return None
         return iamgekit_signed_URL.generate_signed_url(instance.file_url)
+    
+
+
+
+class ShareChildFileFolderShareSerializer(serializers.ModelSerializer):
+    
+    id = serializers.SerializerMethodField()
+    updated_at = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FileFolderModel
+        fields = ['name', 'type_of_file_folder','updated_at',  'id']
+        
+    def get_id(self, instance):
+        encoded_id = hash_ID.encode_id(instance.pk)
+        if encoded_id is  None:
+            return instance.pk
+        return encoded_id
+    
+    def get_updated_at(self, instance):
+        return naturaltime(instance.updated_at)
+    
