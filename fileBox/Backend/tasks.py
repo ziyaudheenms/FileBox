@@ -6,6 +6,7 @@ import random
 import string
 from turtle import st
 from celery import shared_task
+from h11 import Response
 from imagekitio import ImageKit
 from Backend.models import ClerkUserProfile, ClerkUserStorage, FileFolderModel
 from channels.layers import get_channel_layer
@@ -145,18 +146,24 @@ def delete_image_from_imagekit(imagekit_file_ID):
     
 
 @shared_task
-def implement_copy_of_records(children_of_current_source_instance_id , target_level_id , storage_space_required , author_id):
+def implement_copy_of_records(children_of_current_source_instance_id , target_level_id , storage_space_required , author_id ):
 
     target_folder_instance = FileFolderModel.objects.filter(pk = target_level_id).first() if target_level_id else None
     child = FileFolderModel.objects.filter(pk = children_of_current_source_instance_id).first()
     author = ClerkUserProfile.objects.filter(clerk_user_id = author_id).first()
+  
+    if not author:
+        return {"status_code": 5001, "message": "User profile not found"}
+        
     print(target_folder_instance , child , author)
+
     with transaction.atomic():
         print("entered")
         def recursive_record_copy(child_instance , target_parent): 
             print("starting")
             copied_instance = copy.copy(child_instance)
             copied_instance.pk = None
+            copied_instance.author = author
             print("set the path")
             new_path = f"{target_parent.path or ''}/{target_parent.pk}".strip("/") if target_parent else None
             copied_instance.path = new_path

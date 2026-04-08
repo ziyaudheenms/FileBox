@@ -2327,17 +2327,44 @@ def copy_file_folder(request):
         
         target_folder_hashed_id = request.query_params.get("targetFolderHashedID") #the place where the record will be moved -> ALWAYS FOLDER , will be none for if its root
         source_record_hashed_id = request.query_params.get("sourceRecordHashedID") #the source (record ) that is to be moved
+        sharable_uuid_of_main_resource = request.query_params.get("sharableUUID")
 
         target_folder_id = hash_ID.decode_id(target_folder_hashed_id)
-        source_record_id = source_record_hashed_id # source id hash is already a integer for the native owner
+        source_record_id = source_record_hashed_id if isinstance(source_record_hashed_id , int) else hash_ID.decode_id(source_record_hashed_id) #native user uses there DB ID where as shared will use hashed one which will be decoded
 
-       
+        # Checking the permission status
+        if sharable_uuid_of_main_resource:
+            share_record = ShareLink.objects.select_related('file_folder_instance').filter(shareable_id=sharable_uuid_of_main_resource).first()
+            if not share_record:
+                return Response({"status_code": 5001, "message": "You are not assigned to share this." , "data" : ""})
+            root_share_folder = share_record.file_folder_instance
+            permission_granded = None
+
+            if root_share_folder.author == user:
+                permission_granded = ('OWNER' , )
+                print('the user requesting to upload is a owner')
+            else:
+                permission_instance = FileFolderPermission.objects.filter(fileFolder_Instance_id=root_share_folder, user_id=user).first()
+                print('collecting the request status of the user')
+                if permission_instance:
+                    ids = (root_share_folder.path.split("/") if root_share_folder.path else []) + [str(root_share_folder.pk)]
+                    permission_granded = permission.grand_permission_for_shared_instance(ids, user, permission_instance)
+                    print(f'permission granted for the user is {permission_granded}')
+                else:
+                    return Response({"status_code": 5001, "message": "Permission Record not found" , "data": ""})
+                
+            if permission_granded[0] not in ['EDIT' , 'ADMIN', 'OWNER']:
+                return Response({"status_code": 5001, "message": "You cant create a copy" , "data": ""})
+        
         if source_record_id:
-            ids = [int(target_folder_id), int(source_record_id)] if target_folder_id else [int(source_record_id)]
-            record_context = FileFolderModel.objects.select_for_update().filter(pk__in=ids, author=user)
+            print(source_record_id , source_record_hashed_id)
+            ids = [int(source_record_id)]
+            print(ids)
+            record_context = FileFolderModel.objects.select_for_update().filter(pk__in=ids)
             record_map = {item.pk: item for item in record_context}
-
+            print(record_map)
             source_record_instance = record_map.get(int(source_record_id))
+            print(source_record_instance)
             if source_record_instance is None:
                 responce_data = {
                     'status_code' : 5001,
@@ -2365,10 +2392,8 @@ def copy_file_folder(request):
                 }
                 return Response(responce_data)
             
-            target_record_instance = record_map.get(int(target_folder_id)) if target_folder_id else None
-            is_root = True if target_folder_id is None else False
             print("off loading")
-            copy_engine = implement_copy_of_records.delay(source_record_id , target_folder_id , required_memory_space , source_record_instance.author.clerk_user_id)
+            copy_engine = implement_copy_of_records.delay(source_record_id , target_folder_id , required_memory_space , user.clerk_user_id )
             print("off loading")
             responce_data = {
                 'status_code' : 5000,
