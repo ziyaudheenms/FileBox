@@ -6,6 +6,8 @@ from django.utils import timezone
 # Create your models here.
 
 
+from django.contrib.postgres.search import SearchVectorField
+from django.contrib.postgres.indexes import GinIndex
 class ClerkUserProfile(models.Model):
 
     TIER_OPTIONS = [
@@ -59,12 +61,18 @@ class FileFolderModel(models.Model):
     is_favorite = models.BooleanField(default=False)
 
 
+    search_vector = SearchVectorField(null=True)
+
     def __str__(self) -> str:
         return self.name
 
 
     class Meta:
         verbose_name_plural = "FileFolderModels"
+        indexes = [
+            GinIndex(fields=['search_vector'] , name='file_search_vector_idx')
+        ]
+
 
 
 #DataBase model to track the storage of each user  (Will be used in future for tracking the storage limits of each user based on their tier) (also will conduct Audit in a periodic manner to update the used storage of each user to verify if the record details are correct)
