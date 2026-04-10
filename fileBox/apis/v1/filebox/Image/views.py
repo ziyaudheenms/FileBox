@@ -1810,7 +1810,7 @@ def update_file_meta_data(request):
     if request_state.is_signed_in:
         request_payload = request_state.payload
         user_id = request_payload['sub']
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
         if not user:
             responce_data = {
                 "status_code" : 4001,
@@ -1818,12 +1818,13 @@ def update_file_meta_data(request):
                 "data" : ""
             }
             return Response(responce_data)
+        
         file_id = request.query_params.get("fileID")
         sharable_UUID = request.query_params.get("sharableUUID")
         file_hash = request.query_params.get("fileHash")
 
         file_Instance = None
-        delete_key = None
+        delete_cache_key = None
 
         if file_id:
             file_Instance = FileFolderModel.objects.filter(pk = file_id , author = user).first()
@@ -2412,3 +2413,36 @@ def copy_file_folder(request):
         }
         return Response(responce_data)
        
+
+def search_file_folders(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        responce_data = {
+                "status_code" : 5000,
+                "message" : "Successfully Searched the content you need",
+                "data" : ""
+        }
+        return Response(responce_data)
+        
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)

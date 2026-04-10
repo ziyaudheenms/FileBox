@@ -25,5 +25,7 @@ urlpatterns = [
     path('move/availableRecords' , views.list_the_possible_folders_to_move),
     path('move/' , views.move_file_folder),
     path('copy/' , views.copy_file_folder),
+    path('update/file/' , views.update_file_meta_data),
+    path('search/' , views.search_file_folders)
 ]
                             
