@@ -2445,7 +2445,7 @@ def search_file_folders(request):
         if user_search_query:
             search_query_vector = SearchQuery(user_search_query , search_type="websearch")  #this function converts the query from the user to a format that it can be similar to the search_vector field
             queryset = queryset.annotate(
-                rank = SearchRank('search_vector' , search_query_vector),
+                rank = SearchRank(F('search_vector') , search_query_vector , cover_density=True , normalization=32),
                 snippet = SearchHeadline(
                     Coalesce('description' , Value('')),
                     search_query_vector,
