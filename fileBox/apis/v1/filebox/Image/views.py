@@ -23,7 +23,10 @@ from django_redis.cache import RedisCache
 
 #importing the dotenv packages and rest framework packages 
 from django.conf import settings
+from django.contrib.postgres.search import SearchQuery, SearchRank, SearchHeadline
+from django.db.models.functions import Coalesce
 from dotenv import load_dotenv
+from h11 import Request
 from httpx import delete
 import pkg_resources
 from rest_framework.response import Response
@@ -46,7 +49,7 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
+from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
 from ..utils import permission , copyToolkit
@@ -162,7 +165,7 @@ def uploadImage(request):
         #creating the dummy record for reference in the frontend()
         file_instance = FileFolderModel.objects.create(
             author = user,
-            name = filename,
+            name = root,
             size = filesize,
             is_root = True if folder == None else False,
             path = path_to_be_appended,
@@ -259,9 +262,12 @@ def JoinChunks(request):
         user_id = request_payload['sub']
 
         chunk_file_ID = request.data["fileId"]
-        file_name = request.data["fileName"]
+        full_file_name = request.data["fileName"]
         file_size = request.data["fileSize"]
         file_extenstion = request.data["fileExtenstion"]
+        
+        # Separate name and extension
+        file_name = os.path.splitext(full_file_name)[0]
 
         temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_chunks', chunk_file_ID)
         if not os.path.exists(temp_dir):
@@ -1887,7 +1893,7 @@ def update_file_meta_data(request):
                 file_Instance.description = description 
             if name:
                 file_name , extension = os.path.splitext(name)
-                file_Instance.name = f"{file_name}{file_Instance.file_extension}"
+                file_Instance.name = f"{file_name}"
 
                 if file_Instance.is_root: #root records can be only made by the origignal owners......
                     print("deleting thr image.........(root)")
@@ -2413,7 +2419,7 @@ def copy_file_folder(request):
         }
         return Response(responce_data)
        
-
+@api_view(['POST'])
 def search_file_folders(request):
     request_state = clerk_SDK.authenticate_request(
         request,
@@ -2432,13 +2438,40 @@ def search_file_folders(request):
                 "data" : ""
             }
             return Response(responce_data)
-        responce_data = {
-                "status_code" : 5000,
-                "message" : "Successfully Searched the content you need",
-                "data" : ""
-        }
-        return Response(responce_data)
         
+        user_search_query =  request.query_params.get("q")
+        queryset = FileFolderModel.objects.filter(author=user)
+
+        if user_search_query:
+            search_query_vector = SearchQuery(user_search_query , search_type="websearch")  #this function converts the query from the user to a format that it can be similar to the search_vector field
+            queryset = queryset.annotate(
+                rank = SearchRank(F('search_vector') , search_query_vector , cover_density=True , normalization=32),
+                snippet = SearchHeadline(
+                    Coalesce('description' , Value('')),
+                    search_query_vector,
+                    start_sel="<mark className='text-red-500 font-bold font-figtree'>",
+                    stop_sel="</mark>",
+                )
+            ).filter(search_vector = search_query_vector).order_by('-rank','-isfolder')
+            context = {
+                "request" : Request
+            }
+            serialized_data = SearchResultSerializer(queryset , many=True , context=context).data
+            
+            responce_data = {
+                    "status_code" : 5000,
+                    "message" : "Successfully Searched the content you need",
+                    "data" : serialized_data
+            }
+            return Response(responce_data)
+        
+        responce_data = {
+                    "status_code" : 5001,
+                    "message" : "no query found",
+                    "data" : ""
+            }
+        return Response(responce_data)
+
     else:
         responce_data = {
             'status_code' : 4001,

@@ -1,3 +1,6 @@
+from os import read
+
+from attr import field
 from rest_framework import serializers
 from Backend.models import FileFolderModel , ClerkUserStorage , ClerkUserProfile, ShareLink
 from ..hashDependency import hash_ID
@@ -229,3 +232,22 @@ class ShareChildFileFolderShareSerializer(serializers.ModelSerializer):
     def get_updated_at(self, instance):
         return naturaltime(instance.updated_at)
     
+
+
+class SearchResultSerializer(serializers.ModelSerializer):
+    #defining the columns that actually is not present in the DB , but created by annotate
+    rank = serializers.FloatField(read_only=True)
+    snippet = serializers.CharField(read_only=True)
+
+    class Meta:
+        model = FileFolderModel
+        fields = ["id" , "author" , "name" , "type_of_file_folder" , "rank" , "snippet" , "description" , "isfolder"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # if relevance and snippet are none , just remove them
+        if data.get('rank') is None:
+            data.pop('rank', None)
+            data.pop('snippet', None)
+            
+        return data
