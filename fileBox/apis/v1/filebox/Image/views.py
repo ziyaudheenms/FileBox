@@ -2440,9 +2440,14 @@ def search_file_folders(request):
             return Response(responce_data)
         
         user_search_query =  request.query_params.get("q")
-        queryset = FileFolderModel.objects.filter(author=user)
+        queryset = None
+        scope_of_search = request.query_params.get("scope")
+        if scope_of_search:  # for searching of the sub folder structures 
+            queryset = FileFolderModel.objects.filter(author = user , parentFolder = scope_of_search)
+        else: #if no scope that performing global search
+            queryset = FileFolderModel.objects.filter(author=user)
 
-        if user_search_query:
+        if user_search_query and queryset:
             search_query_vector = SearchQuery(user_search_query , search_type="websearch")  #this function converts the query from the user to a format that it can be similar to the search_vector field
             queryset = queryset.annotate(
                 rank = SearchRank(F('search_vector') , search_query_vector , cover_density=True , normalization=32),
