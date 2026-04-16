@@ -2,12 +2,21 @@
 from __future__ import absolute_import, unicode_literals
 import os
 from celery import Celery
-
+from celery.signals import task_postrun , task_prerun
+from django.db import close_old_connections
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'fileBox.settings')
-
 # Create a Celery application instance
 app = Celery('fileBox') # Use your project name here
+
+#initializing the prerun and postrun functions to make the system efficient.
+@task_prerun.connect
+def close_db_connections_before(**kwargs):
+    close_old_connections()  
+
+@task_postrun.connect
+def close_db_connections_after(**kwargs):
+    close_old_connections()  
 
 # Load configuration from your Django settings.py file, using the 'CELERY' namespace.
 # e.g., CELERY_BROKER_URL will be picked up.
