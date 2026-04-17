@@ -640,10 +640,16 @@ def getAllFileFolders(request):
         
         parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
         pagination_cursor = request.query_params.get("cursor")
-
-        # redis_cache: RedisCache = cache # type: ignore
-        # redis_cache.delete_pattern(f'storage_stat_of_{user.clerk_user_id}*', version=1)
-        cache_key = f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
+        category_type = request.query_params.get("category")   #allowed_types = [IMAGE, DOCUMENT, VIDEO, OTHERS]
+        if category_type and not category_type in ["image", "document", "video", "others"]:
+            responce_data = {
+                "status_code" : 5002,
+                "message" : "Invalid category type",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key', cache_key)
         # redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}*', version=2)
 
@@ -656,7 +662,7 @@ def getAllFileFolders(request):
         if parent_folder_id is not None:
             all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id ).order_by('-updated_at')
         else:
-            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
+            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False, author = user, type_of_file_folder=category_type).order_by('-updated_at') if category_type else FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
 
         if not all_files_folders_instance.exists():
             responce_data = {
