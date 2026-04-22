@@ -583,7 +583,7 @@ def isFavorite(request):
             redis_cache: RedisCache = cache # type: ignore  
             redis_cache.delete_pattern(f'*favorites_{user.clerk_user_id}_*', version=2)
             
-            if instance.parentFolder is not None:  #clearing the parent folder not the root 
+            if instance.parentFolder is not None:  #clearing the parent folder not the root     
                 redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{instance.parentFolder.pk}_*', version=2)
                 return Response(responce_data)
             else: #clearing the entire root , since the trash update fileFolder might be a root level Record..
@@ -651,14 +651,14 @@ def getAllFileFolders(request):
         
         cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key', cache_key)
-        # redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}_{parent_folder_id}*', version=2)
+        redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}*', version=2)
 
         #looking up in cache for the required data.
         if cache.has_key(cache_key , version=2):
             print('Fetching from cache version 2', cache_key)
             return Response(cache.get(cache_key , version=2))
         
-
+        parentFolder = FileFolderModel.objects.filter(pk = parent_folder_id).first() #for building the breadcrumbs
         if parent_folder_id is not None:
             all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id ).order_by('-updated_at')
         else:
@@ -672,6 +672,14 @@ def getAllFileFolders(request):
             }
             return Response(responce_data)
         
+        
+        ids =  (parentFolder.path.split('/') if parentFolder.path else []) if parentFolder else []
+        ids.append(parent_folder_id) 
+        folderNames = FileFolderModel.objects.filter(pk__in =ids).values_list('name', flat=True)
+        pathname =  '/'.join(folderNames)
+
+        print(pathname , ids , "-> used for breadcrumbs")
+
         paginated_files_folders = FileFolderCursorBasedPagination()
         paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
 
@@ -681,17 +689,27 @@ def getAllFileFolders(request):
 
         if paginated_instance is not None:
             serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
-            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data).data
+            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
+                    "names" : pathname,
+                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+                }).data
             cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
             print("setting the cached value")
-            return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data)
+            return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
+                    "names" : pathname,
+                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+                })
         
         serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
         print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
         responce_data = {
                 "status_code" : 5000,
                 "message" : "Folder Created Successfully",
-                "data" : serialized_files_and_folders.data
+                "data" : serialized_files_and_folders.data,
+                "breadcrumbs" : {
+                    "names" : pathname,
+                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+                }
         }
         
         cache.set(cache_key, responce_data)
