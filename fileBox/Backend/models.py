@@ -59,7 +59,8 @@ class FileFolderModel(models.Model):
     #tracking if the file/folder states ....
     is_trash = models.BooleanField(default=False)
     is_favorite = models.BooleanField(default=False)
-
+    is_critical = models.BooleanField(default=False) #used to track the critical files/folders of the user (premium feature) (will be used in future to provide special features for the critical files/folders like auto backup of the critical files/folders to another cloud storage or something like that.)
+    is_password_protected = models.BooleanField(default=False) #used to track whether the file/folder is password protected or not (premium feature) (will be used in future to provide the feature of password protecting the file/folder)
 
     search_vector = SearchVectorField(null=True)
 
@@ -148,3 +149,11 @@ class ShareLink(models.Model):
 
     def __str__(self):
         return f"{self.shareable_id} - {self.view_type} - {self.owner.clerk_user_name}"
+
+class ResourceSecurityPolicies(models.Model):
+    file_folder_instance = models.OneToOneField(FileFolderModel, on_delete=models.CASCADE, related_name="security_policies")
+    encypted_password = models.TextField(null=True, blank=True) #used to store the encrypted password for the fileFolder instance (PREMIUM FEATURE)
+    security_pass_key = models.TextField(null=True, blank=True) #pass_key that will be returned once the password enetered will be true for a limited time stamp , after creating the pass key once it reaches 60 seconds it will become null again.
+    def __str__(self):
+        return f"Security Policies for {self.file_folder_instance.name}"
+    
