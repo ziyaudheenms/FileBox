@@ -52,7 +52,7 @@ from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_
 from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
-from ..utils import permission , copyToolkit , tokenCrypto
+from ..utils import permission , copyToolkit
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
@@ -2510,91 +2510,90 @@ def search_file_folders(request):
         return Response(responce_data)
 
 
-@api_view(['GET'])
-def verify_password_security(request):
+@api_view(['GET']) 
+def verify_password_security(request): 
     request_state = clerk_SDK.authenticate_request(
         request,
         AuthenticateRequestOptions(
             authorized_parties=['http://localhost:3000']
         )
     )
-    if request_state.is_signed_in:
-        request_payload = request_state.payload
-        user_id = request_payload['sub']
-        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
-        if user is None:
-            responce_data = {
-                "status_code" : 4001,
-                "message" : "User Record Not Found",
-                "data" : ""
-            }
-            return Response(responce_data)
+    if request_state.is_signed_in: 
+        request_payload = request_state.payload 
+        user_id = request_payload['sub'] 
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first() 
 
-    
-        file_folder_id = request.params.get('fileFolderID')
-        if isinstance(file_folder_id, str) and file_folder_id:
-            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried
-
-        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first()
-        if not file_folder_instance:
-            responce_data = {
-                'status_code' : 5001,
-                'message' : 'Record instance not found',
-                'data' : ''
-            }
+        if user is None: 
+            responce_data = { 
+                "status_code" : 4001, 
+                "message" : "User Record Not Found", 
+                "data" : "" 
+            } 
+            
+            return Response(responce_data) 
+        
+        file_folder_id = request.params.get('fileFolderID') 
+        if isinstance(file_folder_id, str) and file_folder_id: 
+            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
+        
+        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() 
+        if not file_folder_instance: 
+            responce_data = { 
+                'status_code' : 5001, 
+                'message' : 'Record instance not found', 
+                'data' : '' 
+            } 
             return Response(responce_data)
         
-        #bypassing the logic for author when its not critical
-        if not file_folder_instance.is_critical and user == file_folder_instance.author:
-            responce_data = {
-                'status_code' : 5000,
+         #bypassing the logic for author when its not critical 
+        if not file_folder_instance.is_critical and user == file_folder_instance.author: 
+            responce_data = { 
+                'status_code' : 5000, 
                 'message' : 'The file/folder is not critical , you can access it without password (Bypassed the password security for author)',
-                'data' : ''
-            }
-            return Response(responce_data)
-        #checking if the password_protected has been implemented
-        if not file_folder_instance.is_password_protected:
-            responce_data = {
-                'status_code' : 5000,
-                'message' : 'The file/folder is not password protected , you can access it without password',
-                'data' : ''
-            }
-            return Response(responce_data)
-
-        #checking the access pass_key send from the frontend with the security_pass_key we have in the db.
-        security_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first()
-        if not security_instance:
-           responce_data = {
-                'status_code' : 5003,
-                'message' : 'Resource security policy instance not found',
-                'data' : ''
-            }
-           return Response(responce_data)
+                'data' : '' 
+            } 
+            return Response(responce_data) 
         
-        security_pass_key = security_instance.security_pass_key  #pass key stored in the db (encrypted one)
-        token_from_frontend = request.headers.get('X-Security-Pass-Key') #pass key send from the frontend (encrypted one)
-
-        if not security_pass_key or security_pass_key != token_from_frontend:
-            responce_data = {
-                'status_code' : 4005,
-                'message' : 'Security pass key may have been expired',
-                'data' : ''
-            }
-            return Response(responce_data)
-
-
-        if not token_from_frontend:
-            responce_data = {
-                'status_code' : 4008,
-                'message' : 'Security pass key is required to access this resource',
-                'data' : ''
-            }
-            return Response(responce_data)
-
-    else:
-        responce_data = {
-            'status_code' : 4001,
-            'message' : 'User not authenticated',
-            'data' : ''
-        }
+        #checking if the password_protected has been implemented 
+        if not file_folder_instance.is_password_protected: 
+            responce_data = { 
+                'status_code' : 5000, 
+                'message' : 'The file/folder is not password protected , you can access it without password', 
+                'data' : '' 
+            } 
+            return Response(responce_data) 
+        
+        #checking the access pass_key send from the frontend with the security_pass_key we have in the db. 
+        security_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first() 
+        if not security_instance: 
+            responce_data = { 
+                'status_code' : 5003, 
+                'message' : 'Resource security policy instance not found', 
+                'data' : '' 
+            } 
+            return Response(responce_data) 
+    
+        security_pass_key = security_instance.security_pass_key  #pass key stored in the db (encrypted one) 
+        token_from_frontend = request.headers.get('X-Security-Pass-Key') #pass key send from the frontend (encrypted one) 
+        if not security_pass_key or security_pass_key != token_from_frontend: 
+            responce_data = { 
+                'status_code' : 4005, 
+                'message' : 'Security pass key may have been expired', 
+                'data' : '' 
+            } 
+            return Response(responce_data) 
+        
+        if not token_from_frontend: 
+            responce_data = { 
+                'status_code' : 4008, 
+                'message' : 'Security pass key is required to access this resource', 
+                'data' : '' 
+            } 
+            return Response(responce_data) 
+    else: 
+        responce_data = { 
+            'status_code' : 4001, 
+            'message' : 'User not authenticated', 
+            'data' : '' 
+        } 
         return Response(responce_data)
