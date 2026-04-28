@@ -19,10 +19,10 @@ def verify_session(view_func):
     def _wrapped_view(request, *args, **kwargs):
         # 1. Clerk Authentication Check
         request_state = clerk_SDK.authenticate_request(
-        request,
-        AuthenticateRequestOptions(
-            authorized_parties=['http://localhost:3000']
-        )
+            request,
+            AuthenticateRequestOptions(
+                authorized_parties=['http://localhost:3000']
+            )
         )
         if request_state.is_signed_in: 
             request_payload = request_state.payload 
@@ -75,16 +75,7 @@ def verify_session(view_func):
             security_pass_key = security_session_instance.session_token  #pass key stored in the db (hashed one)
             token_from_frontend = request.headers.get('X-Security-Pass-Key') #pass key send from the frontend (raw one) 
             
-            if not token_from_frontend: 
-                responce_data = { 
-                    'status_code' : 4008, 
-                    'message' : 'Security pass key is required to access this resource', 
-                    'data' : '' 
-                } 
-                return Response(responce_data) 
-        
-        
-            if not security_pass_key or not check_password(token_from_frontend, security_pass_key) or security_session_instance.expiry_time < timezone.now():  #checking if the pass key is valid by checking if its there in the db and also checking if the token from the frontend matches with the decrypted token from the db and also checking if the token is expired or not by comparing the expiry time with the current time.
+            if not token_from_frontend or not security_pass_key or not check_password(token_from_frontend, security_pass_key) or security_session_instance.expiry_time < timezone.now():  #checking if the pass key is valid by checking if its there in the db and also checking if the token from the frontend matches with the decrypted token from the db and also checking if the token is expired or not by comparing the expiry time with the current time.
                 responce_data = { 
                     'status_code' : 4005, 
                     'message' : 'Security pass key may have been expired', 

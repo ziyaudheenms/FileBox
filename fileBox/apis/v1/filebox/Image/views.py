@@ -48,6 +48,7 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ResourceSecurityPolicies, SecuritySession, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
+from fileBox.apis.v1.filebox.utils.sessionSecurity import verify_session
 from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
@@ -869,60 +870,22 @@ def getFavoriteFileFolders(request):
 
 
 @api_view(['GET'])
-def getSingleImage(request):
+@verify_session  #custom decorator to verify the session and also to pass the user and file_folder_instance.
+def getSingleResource(request , user=None , file_folder=None):  # user and the file_folder_instance are passed by custom decorator
     #API enpoint to get single image details based on the image ID passed through the query params
-    request_state = clerk_SDK.authenticate_request(
-        request,
-        AuthenticateRequestOptions(
-            authorized_parties=['http://localhost:3000']
-        )
-    )
-    if request_state.is_signed_in:
-        request_payload = request_state.payload
-        user_id = request_payload['sub']
+    context = {
+        "request" : request
+    }
+    serialized_resource = FileFolderSerializer(file_folder , context = context)
 
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
-        if not user:
-            responce_data = {
-                "status_code" : 4001,
-                "message" : "User Record Not Found",
-                "data" : ""
-            }
-            return Response(responce_data)
-        
-        image_file_id = request.query_params.get("imageFileID")   #get the ID of the image file through query params
+    responce_data = {
+        "status_code" : 5000,
+        "message" : "Resource Fetched Successfully",
+        "data" : serialized_resource.data
+    }
 
-        if FileFolderModel.objects.filter(pk = image_file_id , author = user , isfolder = False).exists():
-            image_instance = FileFolderModel.objects.get(pk = image_file_id , author = user , isfolder = False)
-            context = {
-                "request" : request
-            }
-            serialized_image = FileFolderSerializer(image_instance , context = context)
-
-            responce_data = {
-                "status_code" : 5000,
-                "message" : "Image Fetched Successfully",
-                "data" : serialized_image.data
-            }
-
-            return Response(responce_data)
-        else:
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "Image Not Found",
-                "data" : ""
-            }
-
-            return Response(responce_data)
-    else:
-        responce_data = {
-            "status_code" : 4001,
-            "message" : "User not authenticated",
-            "data" : ""
-        }
-
-        return Response(responce_data)
-
+    return Response(responce_data)
+    
 @api_view(['GET'])
 def getStorageDetails(request):
     #API endpoint to get the storage details of the user
