@@ -26,6 +26,8 @@ urlpatterns = [
     path('move/' , views.move_file_folder),
     path('copy/' , views.copy_file_folder),
     path('update/file/' , views.update_file_meta_data),
-    path('search/' , views.search_file_folders)
+    path('search/' , views.search_file_folders),
+    path('verify/password' , views.check_password_return_session_token),
+    path('security/policy' , views.create_or_update_security_policy),
 ]
                             
