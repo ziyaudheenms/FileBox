@@ -14,7 +14,7 @@ urlpatterns = [
     path('fileFolders', views.getAllFileFolders), #api endpoint to get all the files/folders + file/folder pagination along with if it's inside any saperate folder using params.
     path('fileFolders/Trash', views.getTrashFileFolders), #api endpoint to get all the trashed files/folders + file/folder pagination along with if it's inside any saperate folder using params.
     path('fileFolders/Favorite', views.getFavoriteFileFolders), #api endpoint to get all the favorite files/folders + file/folder pagination along with if it's inside any saperate folder using params.
-    path('fileFolders/Image', views.getSingleImage), #api endpoint to get single image details using pk id sent through params
+    path('fileFolders/Single', views.getSingleResource), #api endpoint to get single image details using pk id sent through params
     path('storage/status/' , views.getStorageDetails), # this api endpoint is used to get the storage details of the user
     path('permission/getUser' , views.get_the_user_for_permission),
     path('permission/grandUsers' , views.assign_permission_to_user),
@@ -26,6 +26,8 @@ urlpatterns = [
     path('move/' , views.move_file_folder),
     path('copy/' , views.copy_file_folder),
     path('update/file/' , views.update_file_meta_data),
-    path('search/' , views.search_file_folders)
+    path('search/' , views.search_file_folders),
+    path('verify/password' , views.check_password_return_session_token),
+    path('security/policy' , views.create_or_update_security_policy),
 ]
                             

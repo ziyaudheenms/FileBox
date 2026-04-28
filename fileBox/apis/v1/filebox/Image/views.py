@@ -1,7 +1,7 @@
-import copy
-from email.policy import default
-from math import e
 import os
+from django.utils import timezone
+from datetime import timedelta
+import uuid
 import base64
 import shutil
 from sqlite3 import Cursor
@@ -28,12 +28,11 @@ from django.db.models.functions import Coalesce
 from dotenv import load_dotenv
 from h11 import Request
 from httpx import delete
-import pkg_resources
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 
 # pakckages for clerk integration
-from clerk_backend_api import Clerk, Instance
+from clerk_backend_api import Clerk
 from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 
@@ -47,12 +46,13 @@ from Backend.tasks import delete_image_from_imagekit, implement_copy_of_records,
 from django_smart_ratelimit import rate_limit
 from django_ratelimit.decorators import ratelimit
 
-from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ResourceSecurityPolicies, ShareLink # importing the models from the registered app
+from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ResourceSecurityPolicies, SecuritySession, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
+from fileBox.apis.v1.filebox.utils.sessionSecurity import verify_session
 from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
-from ..utils import permission , copyToolkit
+from ..utils import permission , copyToolkit , stringEncrypter
 
 load_dotenv()
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
@@ -870,60 +870,22 @@ def getFavoriteFileFolders(request):
 
 
 @api_view(['GET'])
-def getSingleImage(request):
+@verify_session  #custom decorator to verify the session and also to pass the user and file_folder_instance.
+def getSingleResource(request , user=None , file_folder=None):  # user and the file_folder_instance are passed by custom decorator
     #API enpoint to get single image details based on the image ID passed through the query params
-    request_state = clerk_SDK.authenticate_request(
-        request,
-        AuthenticateRequestOptions(
-            authorized_parties=['http://localhost:3000']
-        )
-    )
-    if request_state.is_signed_in:
-        request_payload = request_state.payload
-        user_id = request_payload['sub']
+    context = {
+        "request" : request
+    }
+    serialized_resource = FileFolderSerializer(file_folder , context = context)
 
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
-        if not user:
-            responce_data = {
-                "status_code" : 4001,
-                "message" : "User Record Not Found",
-                "data" : ""
-            }
-            return Response(responce_data)
-        
-        image_file_id = request.query_params.get("imageFileID")   #get the ID of the image file through query params
+    responce_data = {
+        "status_code" : 5000,
+        "message" : "Resource Fetched Successfully",
+        "data" : serialized_resource.data
+    }
 
-        if FileFolderModel.objects.filter(pk = image_file_id , author = user , isfolder = False).exists():
-            image_instance = FileFolderModel.objects.get(pk = image_file_id , author = user , isfolder = False)
-            context = {
-                "request" : request
-            }
-            serialized_image = FileFolderSerializer(image_instance , context = context)
-
-            responce_data = {
-                "status_code" : 5000,
-                "message" : "Image Fetched Successfully",
-                "data" : serialized_image.data
-            }
-
-            return Response(responce_data)
-        else:
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "Image Not Found",
-                "data" : ""
-            }
-
-            return Response(responce_data)
-    else:
-        responce_data = {
-            "status_code" : 4001,
-            "message" : "User not authenticated",
-            "data" : ""
-        }
-
-        return Response(responce_data)
-
+    return Response(responce_data)
+    
 @api_view(['GET'])
 def getStorageDetails(request):
     #API endpoint to get the storage details of the user
@@ -2509,91 +2471,143 @@ def search_file_folders(request):
         }
         return Response(responce_data)
 
-
-@api_view(['GET']) 
-def verify_password_security(request): 
+@api_view(['POST'])
+def check_password_return_session_token(request):
     request_state = clerk_SDK.authenticate_request(
         request,
         AuthenticateRequestOptions(
             authorized_parties=['http://localhost:3000']
         )
     )
-    if request_state.is_signed_in: 
-        request_payload = request_state.payload 
-        user_id = request_payload['sub'] 
-        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first() 
-
-        if user is None: 
-            responce_data = { 
-                "status_code" : 4001, 
-                "message" : "User Record Not Found", 
-                "data" : "" 
-            } 
-            
-            return Response(responce_data) 
-        
-        file_folder_id = request.params.get('fileFolderID') 
-        if isinstance(file_folder_id, str) and file_folder_id: 
-            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
-        
-        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() 
-        if not file_folder_instance: 
-            responce_data = { 
-                'status_code' : 5001, 
-                'message' : 'Record instance not found', 
-                'data' : '' 
-            } 
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
             return Response(responce_data)
         
-         #bypassing the logic for author when its not critical 
-        if not file_folder_instance.is_critical and user == file_folder_instance.author: 
-            responce_data = { 
-                'status_code' : 5000, 
-                'message' : 'The file/folder is not critical , you can access it without password (Bypassed the password security for author)',
-                'data' : '' 
-            } 
-            return Response(responce_data) 
+        password_to_check = request.data.get('password')  #getting the password from the frontend to check with the encrypted password in the db
+        file_folder_id = request.query_params.get('fileFolderID') #getting the file folder ID to check the password for that specific file folder instance
+        if isinstance(file_folder_id, str) and file_folder_id:
+            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried
         
-        #checking if the password_protected has been implemented 
-        if not file_folder_instance.is_password_protected: 
-            responce_data = { 
-                'status_code' : 5000, 
-                'message' : 'The file/folder is not password protected , you can access it without password', 
-                'data' : '' 
-            } 
-            return Response(responce_data) 
+        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() #fetching the file folder instance from the db based on the provided ID
+        security_policy_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first() #fetching the security policy instance for that file folder instance to get the encrypted password to check with the password provided from the frontend        
+        if not file_folder_instance or not security_policy_instance:
+            responce_data = {
+                'status_code' : 5001,
+                'message' : 'Record / security instance not found',
+                'data' : ''
+            }
+            return Response(responce_data)
         
-        #checking the access pass_key send from the frontend with the security_pass_key we have in the db. 
-        security_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first() 
-        if not security_instance: 
-            responce_data = { 
-                'status_code' : 5003, 
-                'message' : 'Resource security policy instance not found', 
-                'data' : '' 
-            } 
-            return Response(responce_data) 
+        if check_password(password_to_check , security_policy_instance.encypted_password or ""):
+            #Generating the sesssion token key which will be valid for 5 minutes.
+            random_security_token_string = str(uuid.uuid4())  #creating unique uuid 32 bit string
+            hashed_security_token_string = make_password(random_security_token_string) #hashing the random string to store in the db as a session token for security purposes because we dont want to store the raw token in the db for security reasons.
+            security_session , created = SecuritySession.objects.update_or_create(
+                session_user = user,
+                file_folder_instance = file_folder_instance,
+                defaults={'session_token': hashed_security_token_string, 'expiry_time': timezone.now() + timedelta(minutes=5), 'created_at_or_updated_at': timezone.now()},
+                create_defaults={'session_user' : user , 'file_folder_instance' : file_folder_instance, 'session_token': hashed_security_token_string, 'created_at_or_updated_at': timezone.now(), 'expiry_time': timezone.now() + timedelta(minutes=5)}
+            )
+       
+            responce_data = {
+                'status_code' : 5000,
+                'message' : 'Entered the correct password and session token created successfully',
+                'data' : {
+                    'session_token' : random_security_token_string,
+                    'expiry_time' : security_session.expiry_time
+                }
+            }
+            return Response(responce_data)
+            
+        responce_data = {
+            'status_code' : 5001,
+            'message' : 'Wrong password !, Please enter the correct password to access this resource',
+            'data' : ''
+        }
+        return Response(responce_data)
+
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)
     
-        security_pass_key = security_instance.security_pass_key  #pass key stored in the db (encrypted one) 
-        token_from_frontend = request.headers.get('X-Security-Pass-Key') #pass key send from the frontend (encrypted one) 
-        if not security_pass_key or security_pass_key != token_from_frontend: 
-            responce_data = { 
-                'status_code' : 4005, 
-                'message' : 'Security pass key may have been expired', 
-                'data' : '' 
-            } 
-            return Response(responce_data) 
+
+@api_view(['POST'])
+def create_or_update_security_policy(request):
+    "This API can only be handled by the Owners , no matter about the share permission or anything , since its a policy only author can access this endpoint."
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
         
-        if not token_from_frontend: 
-            responce_data = { 
-                'status_code' : 4008, 
-                'message' : 'Security pass key is required to access this resource', 
-                'data' : '' 
-            } 
-            return Response(responce_data) 
-    else: 
-        responce_data = { 
-            'status_code' : 4001, 
-            'message' : 'User not authenticated', 
-            'data' : '' 
-        } 
+        file_folder_id = request.query_params.get('fileFolderID')
+        if isinstance(file_folder_id, str) and file_folder_id:
+            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried
+        
+        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id , author=user).first()
+        if not file_folder_instance:
+            responce_data = {
+                'status_code' : 5001,
+                'message' : 'Record instance not found',
+                'data' : ''
+            }
+            return Response(responce_data)
+        with transaction.atomic():  #ensuring that all works or fails together to avoid bottlenecks.
+            if 'password' in request.data:
+                password_to_set = request.data.get('password') #getting the password from the frontend to encrypt and store in the db
+                if password_to_set:
+                    security_policy_instance , created = ResourceSecurityPolicies.objects.update_or_create(
+                        file_folder_instance=file_folder_instance,
+                        defaults={'encypted_password': make_password(password_to_set)},
+                        create_defaults={'file_folder_instance': file_folder_instance, 'encypted_password': make_password(password_to_set)}
+                    )
+
+            if 'is_password_protected' in request.data or 'is_security_critical' in request.data:
+                is_password_protected = request.data.get('is_password_protected') #getting the boolean value from the frontend to set the is_password_protected field in the db which will be used to check if the password protection is enabled for that file folder instance or not when someone tries to access that resource.  (boolean)
+                is_security_critical = request.data.get('is_security_critical') #used to decide whether to bypass the author. (boolean)
+                
+                if is_password_protected is not None:
+                    file_folder_instance.is_password_protected = is_password_protected
+                
+                if is_security_critical is not None:
+                    file_folder_instance.is_critical = is_security_critical
+                
+                file_folder_instance.save(update_fields=['is_password_protected', 'is_critical'])
+
+        responce_data = {
+            'status_code' : 5000,
+            'message' : 'Security policy updated successfully',
+            'data' : ''
+        }
+        return Response(responce_data)
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
         return Response(responce_data)

@@ -153,7 +153,17 @@ class ShareLink(models.Model):
 class ResourceSecurityPolicies(models.Model):
     file_folder_instance = models.OneToOneField(FileFolderModel, on_delete=models.CASCADE, related_name="security_policies")
     encypted_password = models.TextField(null=True, blank=True) #used to store the encrypted password for the fileFolder instance (PREMIUM FEATURE)
-    security_pass_key = models.TextField(null=True, blank=True) #pass_key that will be returned once the password enetered will be true for a limited time stamp , after creating the pass key once it reaches 60 seconds it will become null again.
     def __str__(self):
         return f"Security Policies for {self.file_folder_instance.name}"
+
+
+class SecuritySession(models.Model):
+    session_user = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="security_user_session")
+    file_folder_instance = models.ForeignKey(FileFolderModel, on_delete=models.CASCADE, related_name="security_session_file_folder_instance")
+    session_token = models.TextField(null=False) #used to store the session token for the fileFolder instance (PREMIUM FEATURE) -> encrypted unique string 
+    created_at_or_updated_at = models.DateTimeField(auto_now_add=True)
+    expiry_time = models.DateTimeField()
+
+    def __str__(self):
+        return f"Security Session for {self.file_folder_instance.name} - {self.created_at_or_updated_at}"
     
