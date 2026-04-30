@@ -48,13 +48,11 @@ from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ResourceSecurityPolicies, SecuritySession, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
-from fileBox.apis.v1.filebox.utils.sessionSecurity import verify_session
-from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
+from .serializers import ChildFileFolderShareSerializer, FileFolderSerializer, FileFolderShareSerializer, SearchResultSerializer, SecurityPolicySerializer, ShareChildFileFolderShareSerializer, UserStorageSerializer, PermissionUserSerializer
 from .pagination import FileFolderCursorBasedPagination  #custom pagination class for file/folder GET API responce
 from ..hashDependency import hash_ID
-from ..utils import permission , copyToolkit , stringEncrypter
-
-load_dotenv()
+from ..utils import permission , copyToolkit
+from ..utils.sessionSecurity import verify_session #importing the session security decorator for verifiying the session
 clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))  
 
 
@@ -619,7 +617,8 @@ def testFunction(request):
 
 
 @api_view(['GET'])
-def getAllFileFolders(request):
+@verify_session
+def getAllFileFolders(request,user=None , file_folder=None):
     request_state = clerk_SDK.authenticate_request(
         request,
         AuthenticateRequestOptions(
@@ -2493,9 +2492,12 @@ def check_password_return_session_token(request):
         
         password_to_check = request.data.get('password')  #getting the password from the frontend to check with the encrypted password in the db
         file_folder_id = request.query_params.get('fileFolderID') #getting the file folder ID to check the password for that specific file folder instance
-        if isinstance(file_folder_id, str) and file_folder_id:
-            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried
-        
+        if file_folder_id:
+            if file_folder_id.isdigit():
+                file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
+            else:
+                file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
+            
         file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() #fetching the file folder instance from the db based on the provided ID
         security_policy_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first() #fetching the security policy instance for that file folder instance to get the encrypted password to check with the password provided from the frontend        
         if not file_folder_instance or not security_policy_instance:
@@ -2521,14 +2523,26 @@ def check_password_return_session_token(request):
                 'status_code' : 5000,
                 'message' : 'Entered the correct password and session token created successfully',
                 'data' : {
-                    'session_token' : random_security_token_string,
                     'expiry_time' : security_session.expiry_time
                 }
             }
-            return Response(responce_data)
+            responce =  Response(responce_data)
+
+            responce.set_cookie(
+                key=f'file_access_{file_folder_id}', 
+                value=random_security_token_string,
+                httponly=True,           # Prevents JS access (XSS protection)
+                secure=False,             # Ensures it's only sent over HTTPS (currenlty I am in local development so false to allow http request)
+                samesite='Lax',          # CSRF protection
+                max_age=3600,            # 1 hour in seconds
+                # domain="localhost"     # Optional: specify if needed for local dev
+                path='/'
+            )
+
+            return responce
             
         responce_data = {
-            'status_code' : 5001,
+            'status_code' : 5009,
             'message' : 'Wrong password !, Please enter the correct password to access this resource',
             'data' : ''
         }
@@ -2565,9 +2579,12 @@ def create_or_update_security_policy(request):
             return Response(responce_data)
         
         file_folder_id = request.query_params.get('fileFolderID')
-        if isinstance(file_folder_id, str) and file_folder_id:
-            file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried
-        
+        if file_folder_id:
+            if file_folder_id.isdigit():
+                file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
+            else:
+                file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
+            
         file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id , author=user).first()
         if not file_folder_instance:
             responce_data = {
@@ -2576,32 +2593,102 @@ def create_or_update_security_policy(request):
                 'data' : ''
             }
             return Response(responce_data)
+       
         with transaction.atomic():  #ensuring that all works or fails together to avoid bottlenecks.
+            security_policy_instance , created = ResourceSecurityPolicies.objects.get_or_create(
+                file_folder_instance=file_folder_instance,
+                defaults={'file_folder_instance': file_folder_instance, 'encypted_password': None}
+                )
+
             if 'password' in request.data:
                 password_to_set = request.data.get('password') #getting the password from the frontend to encrypt and store in the db
                 if password_to_set:
-                    security_policy_instance , created = ResourceSecurityPolicies.objects.update_or_create(
-                        file_folder_instance=file_folder_instance,
-                        defaults={'encypted_password': make_password(password_to_set)},
-                        create_defaults={'file_folder_instance': file_folder_instance, 'encypted_password': make_password(password_to_set)}
-                    )
+                   security_policy_instance.encypted_password = make_password(password_to_set)
 
             if 'is_password_protected' in request.data or 'is_security_critical' in request.data:
                 is_password_protected = request.data.get('is_password_protected') #getting the boolean value from the frontend to set the is_password_protected field in the db which will be used to check if the password protection is enabled for that file folder instance or not when someone tries to access that resource.  (boolean)
                 is_security_critical = request.data.get('is_security_critical') #used to decide whether to bypass the author. (boolean)
                 
                 if is_password_protected is not None:
-                    file_folder_instance.is_password_protected = is_password_protected
+                    if not is_password_protected:
+                        security_policy_instance.encypted_password = None #if the password protection is being disabled then we will set the encrypted password to null because there is no need to keep the old encrypted password when the password protection is disabled because it can cause confusion in the future if we keep the old encrypted password when the password protection is disabled and if someone enables the password protection again then it will use the old encrypted password which can cause security issues because the old encrypted password can be compromised and if we keep it null then there will be no security issues because when someone enables the password protection again then it will require to set a new password and it will create a new encrypted password in the db which will be more secure than keeping the old encrypted password in the db when the password protection is disabled.
+                    security_policy_instance.is_password_protected = is_password_protected
                 
                 if is_security_critical is not None:
-                    file_folder_instance.is_critical = is_security_critical
+                    security_policy_instance.is_critical = is_security_critical
                 
-                file_folder_instance.save(update_fields=['is_password_protected', 'is_critical'])
+                security_policy_instance.save(update_fields=['is_password_protected', 'is_critical' , 'encypted_password'])
+                responce_data = {
+                    'status_code' : 5000,
+                    'message' : 'Security policy updated successfully',
+                    'data' : ''
+                }
+                return Response(responce_data)
+            
+            security_policy_instance.save(update_fields=['encypted_password'])
+            responce_data = {
+                'status_code' : 5000,
+                'message' : 'Security policy updated successfully',
+                'data' : ''
+            }
+            return Response(responce_data)
+        
 
+    else:
+        responce_data = {
+            'status_code' : 4001,
+            'message' : 'User not authenticated',
+            'data' : ''
+        }
+        return Response(responce_data)
+
+
+
+@api_view(['GET'])
+def get_security_policy(request):
+    request_state = clerk_SDK.authenticate_request(
+        request,
+        AuthenticateRequestOptions(
+            authorized_parties=['http://localhost:3000']
+        )
+    )
+    if request_state.is_signed_in:
+        request_payload = request_state.payload
+        user_id = request_payload['sub']
+        user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+        if user is None:
+            responce_data = {
+                "status_code" : 4001,
+                "message" : "User Record Not Found",
+                "data" : ""
+            }
+            return Response(responce_data)
+        
+        file_folder_id = request.query_params.get('fileFolderID')
+        if file_folder_id:
+            if file_folder_id.isdigit():
+                file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
+            else:
+                file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
+                
+        # we need to return current stae of the secuirty policies.
+        security_policy_instance = ResourceSecurityPolicies.objects.select_related('file_folder_instance').filter(file_folder_instance__id=file_folder_id).first()
+        if not security_policy_instance:
+            responce_data = {
+                'status_code' : 5001,
+                'message' : 'Security policy not found',
+                'data' : ''
+            }
+            return Response(responce_data)
+        
+        context = {
+            "request" : Request
+        }
+        serialized_data = SecurityPolicySerializer(security_policy_instance , context = context).data
         responce_data = {
             'status_code' : 5000,
-            'message' : 'Security policy updated successfully',
-            'data' : ''
+            'message' : 'Fetched the security policy details successfully',
+            'data' : serialized_data
         }
         return Response(responce_data)
     else:

@@ -29,5 +29,6 @@ urlpatterns = [
     path('search/' , views.search_file_folders),
     path('verify/password' , views.check_password_return_session_token),
     path('security/policy' , views.create_or_update_security_policy),
+    path('security/' , views.get_security_policy),
 ]
                             
