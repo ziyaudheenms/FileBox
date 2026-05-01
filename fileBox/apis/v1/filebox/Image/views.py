@@ -650,7 +650,6 @@ def getAllFileFolders(request,user=None , file_folder=None):
         
         cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
         print('Generated Cache Key', cache_key)
-        redis_cache.delete_pattern(f'*file_folder_list_{user.clerk_user_id}*', version=2)
 
         #looking up in cache for the required data.
         if cache.has_key(cache_key , version=2):
@@ -2492,6 +2491,7 @@ def check_password_return_session_token(request):
         
         password_to_check = request.data.get('password')  #getting the password from the frontend to check with the encrypted password in the db
         file_folder_id = request.query_params.get('fileFolderID') #getting the file folder ID to check the password for that specific file folder instance
+        
         if file_folder_id:
             if file_folder_id.isdigit():
                 file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
@@ -2508,7 +2508,10 @@ def check_password_return_session_token(request):
             }
             return Response(responce_data)
         
+        print(password_to_check , file_folder_id)
+
         if check_password(password_to_check , security_policy_instance.encypted_password or ""):
+            print("inside the password check")
             #Generating the sesssion token key which will be valid for 5 minutes.
             random_security_token_string = str(uuid.uuid4())  #creating unique uuid 32 bit string
             hashed_security_token_string = make_password(random_security_token_string) #hashing the random string to store in the db as a session token for security purposes because we dont want to store the raw token in the db for security reasons.
@@ -2527,7 +2530,7 @@ def check_password_return_session_token(request):
                 }
             }
             responce =  Response(responce_data)
-
+            print(f'file_access_{file_folder_id}')
             responce.set_cookie(
                 key=f'file_access_{file_folder_id}', 
                 value=random_security_token_string,
@@ -2538,7 +2541,7 @@ def check_password_return_session_token(request):
                 # domain="localhost"     # Optional: specify if needed for local dev
                 path='/'
             )
-
+            print("cooked the cokkies")
             return responce
             
         responce_data = {

@@ -57,7 +57,7 @@ def verify_session(view_func):
                     file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
             
             print("Decoded File/Folder ID:", file_folder_id)  # Debugging statement to check the decoded ID
-            print("Raw File/Folder ID from query params:", request.query_params.get('fileFolderID'))  # Debugging statement to check the raw ID from query params
+            print("Raw File/Folder ID from query params:", raw_id)  # Debugging statement to check the raw ID from query params
             print("User ID:", user_id)  # Debugging statement to check the user ID from Clerk payload
             print("User from DB:", user.clerk_user_name)  # Debugging statement to check the user retrieved from the database
             
@@ -92,6 +92,7 @@ def verify_session(view_func):
                 return Response(responce_data) 
         
             security_pass_key = security_session_instance.session_token  #pass key stored in the db (hashed one)
+            print(f'file_access_{file_folder_id}')
             token_from_frontend = request.COOKIES.get(f'file_access_{file_folder_id}') #pass key send from the frontend (raw one) 
             print(request.COOKIES)
             print("Token from frontend:", token_from_frontend)  # Debugging statement to check the token from the frontend
