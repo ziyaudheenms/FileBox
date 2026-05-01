@@ -2526,7 +2526,7 @@ def check_password_return_session_token(request):
                 'status_code' : 5000,
                 'message' : 'Entered the correct password and session token created successfully',
                 'data' : {
-                    'expiry_time' : security_session.expiry_time
+                    'expiry_time' : security_session.expiry_time,
                 }
             }
             responce =  Response(responce_data)
