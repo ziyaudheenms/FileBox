@@ -2,7 +2,7 @@ from os import read
 
 from attr import field
 from rest_framework import serializers
-from Backend.models import FileFolderModel , ClerkUserStorage , ClerkUserProfile, ShareLink
+from Backend.models import FileFolderModel , ClerkUserStorage , ClerkUserProfile, ResourceSecurityPolicies, ShareLink
 from ..hashDependency import hash_ID
 from ..SignedURL import iamgekit_signed_URL
 from django.contrib.humanize.templatetags.humanize import naturaltime
@@ -251,3 +251,8 @@ class SearchResultSerializer(serializers.ModelSerializer):
             data.pop('snippet', None)
             
         return data
+    
+class SecurityPolicySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ResourceSecurityPolicies
+        fields = ['is_password_protected', 'is_critical']
