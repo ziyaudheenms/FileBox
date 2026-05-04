@@ -2508,36 +2508,37 @@ def check_password_return_session_token(request):
             }
             return Response(responce_data)
         
+        is_locked = security_policy_instance.is_locked # feature that bypasses the session validation and direclty prompts for password each time.
         print(password_to_check , file_folder_id)
 
         if check_password(password_to_check , security_policy_instance.encypted_password or ""):
             print("inside the password check")
             #Generating the sesssion token key which will be valid for 5 minutes.
             random_security_token_string = str(uuid.uuid4())  #creating unique uuid 32 bit string
-            hashed_security_token_string = make_password(random_security_token_string) #hashing the random string to store in the db as a session token for security purposes because we dont want to store the raw token in the db for security reasons.
-            security_session , created = SecuritySession.objects.update_or_create(
-                session_user = user,
-                file_folder_instance = file_folder_instance,
-                defaults={'session_token': hashed_security_token_string, 'expiry_time': timezone.now() + timedelta(minutes=5), 'created_at_or_updated_at': timezone.now()},
-                create_defaults={'session_user' : user , 'file_folder_instance' : file_folder_instance, 'session_token': hashed_security_token_string, 'created_at_or_updated_at': timezone.now(), 'expiry_time': timezone.now() + timedelta(minutes=5)}
-            )
-       
+            if not is_locked: # this block will be executed only for session managment since in is_locked session is not required to be stored.
+                hashed_security_token_string = make_password(random_security_token_string) #hashing the random string to store in the db as a session token for security purposes because we dont want to store the raw token in the db for security reasons.
+                security_session , created = SecuritySession.objects.update_or_create(
+                    session_user = user,
+                    file_folder_instance = file_folder_instance,
+                    defaults={'session_token': hashed_security_token_string, 'expiry_time': timezone.now() + timedelta(minutes=security_policy_instance.session_duration), 'created_at_or_updated_at': timezone.now()},
+                    create_defaults={'session_user' : user , 'file_folder_instance' : file_folder_instance, 'session_token': hashed_security_token_string, 'created_at_or_updated_at': timezone.now(), 'expiry_time': timezone.now() + timedelta(minutes=security_policy_instance.session_duration)}
+                )
+
             responce_data = {
                 'status_code' : 5000,
                 'message' : 'Entered the correct password and session token created successfully',
-                'data' : {
-                    'expiry_time' : security_session.expiry_time,
-                }
+                'data' : ''
             }
+
             responce =  Response(responce_data)
             print(f'file_access_{file_folder_id}')
             responce.set_cookie(
-                key=f'file_access_{file_folder_id}', 
+                key=f'short_time_access_{file_folder_id}' if is_locked else f'file_access_{file_folder_id}', 
                 value=random_security_token_string,
                 httponly=True,           # Prevents JS access (XSS protection)
                 secure=False,             # Ensures it's only sent over HTTPS (currenlty I am in local development so false to allow http request)
                 samesite='Lax',          # CSRF protection
-                max_age=3600,            # 1 hour in seconds
+                max_age=10 if is_locked else 3600,            # 1 hour in seconds
                 # domain="localhost"     # Optional: specify if needed for local dev
                 path='/'
             )
@@ -2608,10 +2609,12 @@ def create_or_update_security_policy(request):
                 if password_to_set:
                    security_policy_instance.encypted_password = make_password(password_to_set)
 
-            if 'is_password_protected' in request.data or 'is_security_critical' in request.data:
+            if 'is_password_protected' in request.data or 'is_security_critical' in request.data or 'is_locked' in request.data or 'session_duration' in request.data:
                 is_password_protected = request.data.get('is_password_protected') #getting the boolean value from the frontend to set the is_password_protected field in the db which will be used to check if the password protection is enabled for that file folder instance or not when someone tries to access that resource.  (boolean)
                 is_security_critical = request.data.get('is_security_critical') #used to decide whether to bypass the author. (boolean)
-                
+                is_locked = request.data.get('is_locked')
+                session_duration = request.data.get('session_duration')
+
                 if is_password_protected is not None:
                     if not is_password_protected:
                         security_policy_instance.encypted_password = None #if the password protection is being disabled then we will set the encrypted password to null because there is no need to keep the old encrypted password when the password protection is disabled because it can cause confusion in the future if we keep the old encrypted password when the password protection is disabled and if someone enables the password protection again then it will use the old encrypted password which can cause security issues because the old encrypted password can be compromised and if we keep it null then there will be no security issues because when someone enables the password protection again then it will require to set a new password and it will create a new encrypted password in the db which will be more secure than keeping the old encrypted password in the db when the password protection is disabled.
@@ -2620,7 +2623,13 @@ def create_or_update_security_policy(request):
                 if is_security_critical is not None:
                     security_policy_instance.is_critical = is_security_critical
                 
-                security_policy_instance.save(update_fields=['is_password_protected', 'is_critical' , 'encypted_password'])
+                if is_locked is not None:
+                    security_policy_instance.is_locked = is_locked
+                
+                if session_duration is not None:
+                    security_policy_instance.session_duration = session_duration
+                
+                security_policy_instance.save(update_fields=['is_password_protected', 'is_critical' , 'encypted_password' , 'is_locked' , 'session_duration'])
                 responce_data = {
                     'status_code' : 5000,
                     'message' : 'Security policy updated successfully',
