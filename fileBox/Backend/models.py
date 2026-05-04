@@ -153,7 +153,8 @@ class ResourceSecurityPolicies(models.Model):
     encypted_password = models.TextField(null=True, blank=True) #used to store the encrypted password for the fileFolder instance (PREMIUM FEATURE)
     is_critical = models.BooleanField(default=False) #used to track the critical files/folders of the user 
     is_password_protected = models.BooleanField(default=False) #used to track whether the file/folder is password protected or not
-
+    is_locked = models.BooleanField(default=False) # if yes , each time the resource is clicked, user is prompted to enter the password.
+    session_duration = models.IntegerField(default=1) #used to set the time interval for opening the file since the password is given. (duration is given in minutes.)
     def __str__(self):
         return f"Security Policies for {self.file_folder_instance.name}"
 

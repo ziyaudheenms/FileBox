@@ -255,4 +255,4 @@ class SearchResultSerializer(serializers.ModelSerializer):
 class SecurityPolicySerializer(serializers.ModelSerializer):
     class Meta:
         model = ResourceSecurityPolicies
-        fields = ['is_password_protected', 'is_critical']
+        fields = ['is_password_protected', 'is_critical', 'is_locked', 'session_duration']

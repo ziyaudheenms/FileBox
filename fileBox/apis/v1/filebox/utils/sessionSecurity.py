@@ -73,7 +73,20 @@ def verify_session(view_func):
 
             if not security_policy:
                 return view_func(request, *args, **kwargs)  #if the security policy instance is not found for the file/folder instance then we will just call the view function without any security checks as there are no security policies implemented for that file/folder instance.
-               
+
+            if security_policy.is_locked: #if the author is set the resource locked , each time they access the resource have to provide the password
+                temp_short_access_cokkie = request.COOKIES.get(f'short_time_access_{file_folder_id}')
+                if temp_short_access_cokkie:
+                    return view_func(request , *args, **kwargs)  #grand access to the resource
+                else:
+                    responce_data = {
+                        'status_code' : 4005, 
+                        'message' : 'Locked Resource , Enter The Password.', 
+                        'data' : '' 
+                    } 
+                    return Response(responce_data)
+
+
             if not security_policy.is_critical and user == security_policy.file_folder_instance.author: 
                 return view_func(request, *args, **kwargs)   #calling our view function
             
@@ -90,7 +103,16 @@ def verify_session(view_func):
                     'data' : '' 
                 } 
                 return Response(responce_data) 
-        
+
+            if security_policy.is_locked: 
+                responce_data = {
+                    'status_code' : 4005, 
+                    'message' : 'Locked Resource , Enter The Password.', 
+                    'data' : '' 
+                } 
+                return Response(responce_data)
+
+
             security_pass_key = security_session_instance.session_token  #pass key stored in the db (hashed one)
             print(f'file_access_{file_folder_id}')
             token_from_frontend = request.COOKIES.get(f'file_access_{file_folder_id}') #pass key send from the frontend (raw one) 
