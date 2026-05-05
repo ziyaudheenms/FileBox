@@ -619,108 +619,108 @@ def testFunction(request):
 @api_view(['GET'])
 @verify_session
 def getAllFileFolders(request,user=None , file_folder=None):
-    request_state = clerk_SDK.authenticate_request(
-        request,
-        AuthenticateRequestOptions(
-            authorized_parties=['http://localhost:3000']
-        )
-    )
-    if request_state.is_signed_in:
-        request_payload = request_state.payload
-        user_id = request_payload['sub']
-        user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
-        if not user:
-            responce_data = {
-                "status_code" : 4001,
-                "message" : "User Record Not Found",
-                "data" : ""
-            }
-            return Response(responce_data)
+    # request_state = clerk_SDK.authenticate_request(
+    #     request,
+    #     AuthenticateRequestOptions(
+    #         authorized_parties=['http://localhost:3000']
+    #     )
+    # )
+    # if request_state.is_signed_in:
+    #     request_payload = request_state.payload
+    #     user_id = request_payload['sub']
+    #     user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
+    #     if not user:
+    #         responce_data = {
+    #             "status_code" : 4001,
+    #             "message" : "User Record Not Found",
+    #             "data" : ""
+    #         }
+    #         return Response(responce_data)
         
-        parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
-        pagination_cursor = request.query_params.get("cursor")
-        category_type = request.query_params.get("category")   #allowed_types = [IMAGE, DOCUMENT, VIDEO, OTHERS]
-        if category_type and not category_type in ["image", "document", "video", "others"]:
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "Invalid category type",
-                "data" : ""
-            }
-            return Response(responce_data)
-        
-        cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{parent_folder_id}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
-        print('Generated Cache Key', cache_key)
-
-        #looking up in cache for the required data.
-        if cache.has_key(cache_key , version=2):
-            print('Fetching from cache version 2', cache_key)
-            return Response(cache.get(cache_key , version=2))
-        
-        parentFolder = FileFolderModel.objects.filter(pk = parent_folder_id).first() #for building the breadcrumbs
-        if parent_folder_id is not None:
-            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = parent_folder_id ).order_by('-updated_at')
-        else:
-            all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False, author = user, type_of_file_folder=category_type).order_by('-updated_at') if category_type else FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
-
-        if not all_files_folders_instance.exists():
-            responce_data = {
-                "status_code" : 5002,
-                "message" : "No Files/Folders Found",
-                "data" : ""
-            }
-            return Response(responce_data)
-        
-        
-        ids =  (parentFolder.path.split('/') if parentFolder.path else []) if parentFolder else []
-        ids.append(parent_folder_id) 
-        folderNames = FileFolderModel.objects.filter(pk__in =ids).values_list('name', flat=True)
-        pathname =  '/'.join(folderNames)
-
-        print(pathname , ids , "-> used for breadcrumbs")
-
-        paginated_files_folders = FileFolderCursorBasedPagination()
-        paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
-
-        context = {
-            "request" : request
-        }
-
-        if paginated_instance is not None:
-            serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
-            result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
-                    "names" : pathname,
-                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-                }).data
-            cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
-            print("setting the cached value")
-            return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
-                    "names" : pathname,
-                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-                })
-        
-        serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
-        print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
+    # parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
+    pagination_cursor = request.query_params.get("cursor")
+    category_type = request.query_params.get("category")   #allowed_types = [IMAGE, DOCUMENT, VIDEO, OTHERS]
+    if category_type and not category_type in ["image", "document", "video", "others"]:
         responce_data = {
-                "status_code" : 5000,
-                "message" : "Folder Created Successfully",
-                "data" : serialized_files_and_folders.data,
-                "breadcrumbs" : {
-                    "names" : pathname,
-                    "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-                }
-        }
-        
-        cache.set(cache_key, responce_data)
-        return Response(responce_data)
-    else: 
-        print('token has expired or user not authenticated' , request_state , request)
-        responce_data = {
-            "status_code" : 4001,
-            "message" : "User not authenticated",
+            "status_code" : 5002,
+            "message" : "Invalid category type",
             "data" : ""
         }
-
         return Response(responce_data)
+    
+    cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{file_folder}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{file_folder}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
+    print('Generated Cache Key', cache_key)
+
+    #looking up in cache for the required data.
+    if cache.has_key(cache_key , version=2):
+        print('Fetching from cache version 2', cache_key)
+        return Response(cache.get(cache_key , version=2))
+    
+    parentFolder = file_folder  #parent folder is been passed from the verify_session decorator.......
+    if parentFolder is not None:
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = file_folder.pk ).order_by('-updated_at')
+    else:
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False, author = user, type_of_file_folder=category_type).order_by('-updated_at') if category_type else FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
+
+    if not all_files_folders_instance.exists():
+        responce_data = {
+            "status_code" : 5002,
+            "message" : "No Files/Folders Found",
+            "data" : ""
+        }
+        return Response(responce_data)
+    
+    
+    ids =  (parentFolder.path.split('/') if parentFolder.path else []) if parentFolder else []
+    ids.append(parentFolder.pk) 
+    folderNames = FileFolderModel.objects.filter(pk__in =ids).values_list('name', flat=True)
+    pathname =  '/'.join(folderNames)
+
+    print(pathname , ids , "-> used for breadcrumbs")
+
+    paginated_files_folders = FileFolderCursorBasedPagination()
+    paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
+
+    context = {
+        "request" : request
+    }
+
+    if paginated_instance is not None:
+        serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
+        result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
+                "names" : pathname,
+                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+            }).data
+        cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
+        print("setting the cached value")
+        return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
+                "names" : pathname,
+                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+            })
+    
+    serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
+    print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
+    responce_data = {
+            "status_code" : 5000,
+            "message" : "Folder Created Successfully",
+            "data" : serialized_files_and_folders.data,
+            "breadcrumbs" : {
+                "names" : pathname,
+                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
+            }
+    }
+    
+    cache.set(cache_key, responce_data)
+    return Response(responce_data)
+    # else: 
+    #     print('token has expired or user not authenticated' , request_state , request)
+    #     responce_data = {
+    #         "status_code" : 4001,
+    #         "message" : "User not authenticated",
+    #         "data" : ""
+    #     }
+
+    #     return Response(responce_data)
     
 
 
@@ -2597,7 +2597,7 @@ def create_or_update_security_policy(request):
                 'data' : ''
             }
             return Response(responce_data)
-       
+        delete_cache_key = f'security_policy_{user.clerk_user_id}_{file_folder_id}' #getting the cache key to update.
         with transaction.atomic():  #ensuring that all works or fails together to avoid bottlenecks.
             security_policy_instance , created = ResourceSecurityPolicies.objects.get_or_create(
                 file_folder_instance=file_folder_instance,
@@ -2635,6 +2635,7 @@ def create_or_update_security_policy(request):
                     'message' : 'Security policy updated successfully',
                     'data' : ''
                 }
+                redis_cache.delete_pattern( delete_cache_key, version=2)
                 return Response(responce_data)
             
             security_policy_instance.save(update_fields=['encypted_password'])
@@ -2643,6 +2644,7 @@ def create_or_update_security_policy(request):
                 'message' : 'Security policy updated successfully',
                 'data' : ''
             }
+            redis_cache.delete_pattern( delete_cache_key, version=2)
             return Response(responce_data)
         
 
@@ -2682,8 +2684,16 @@ def get_security_policy(request):
                 file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
             else:
                 file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
-                
-        # we need to return current stae of the secuirty policies.
+
+        #implementing the cache for security policy
+
+        cache_key = f'security_policy_{user.clerk_user_id}_{file_folder_id}'
+        if cache.has_key(cache_key , version=2):
+            print('Fetching from cache version 2', cache_key)
+            return Response(cache.get(cache_key , version=2))
+
+           
+        # we need to return current stae of the secuirty policies. (when no cached responce)
         security_policy_instance = ResourceSecurityPolicies.objects.select_related('file_folder_instance').filter(file_folder_instance__id=file_folder_id).first()
         if not security_policy_instance:
             responce_data = {
@@ -2702,6 +2712,7 @@ def get_security_policy(request):
             'message' : 'Fetched the security policy details successfully',
             'data' : serialized_data
         }
+        cache.set(cache_key, responce_data ,version=2)  #caching the responce
         return Response(responce_data)
     else:
         responce_data = {
