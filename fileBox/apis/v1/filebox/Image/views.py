@@ -617,27 +617,9 @@ def testFunction(request):
 
 
 @api_view(['GET'])
-@verify_session
-def getAllFileFolders(request,user=None , file_folder=None):
-    # request_state = clerk_SDK.authenticate_request(
-    #     request,
-    #     AuthenticateRequestOptions(
-    #         authorized_parties=['http://localhost:3000']
-    #     )
-    # )
-    # if request_state.is_signed_in:
-    #     request_payload = request_state.payload
-    #     user_id = request_payload['sub']
-    #     user = ClerkUserProfile.objects.get(clerk_user_id = user_id)
-    #     if not user:
-    #         responce_data = {
-    #             "status_code" : 4001,
-    #             "message" : "User Record Not Found",
-    #             "data" : ""
-    #         }
-    #         return Response(responce_data)
-        
-    # parent_folder_id = request.query_params.get("parentFolderID") #if we want to get the files/folders inside any specific folder , we can get the id of that folder through this param
+@verify_session   #custom decorator for session_authentication.
+def getAllFileFolders(request, user=None , file_folder=None):
+    
     pagination_cursor = request.query_params.get("cursor")
     category_type = request.query_params.get("category")   #allowed_types = [IMAGE, DOCUMENT, VIDEO, OTHERS]
     if category_type and not category_type in ["image", "document", "video", "others"]:
@@ -712,17 +694,7 @@ def getAllFileFolders(request,user=None , file_folder=None):
     
     cache.set(cache_key, responce_data)
     return Response(responce_data)
-    # else: 
-    #     print('token has expired or user not authenticated' , request_state , request)
-    #     responce_data = {
-    #         "status_code" : 4001,
-    #         "message" : "User not authenticated",
-    #         "data" : ""
-    #     }
-
-    #     return Response(responce_data)
-    
-
+  
 
 @api_view(['GET'])
 def getTrashFileFolders(request):
@@ -2509,8 +2481,11 @@ def check_password_return_session_token(request):
             return Response(responce_data)
         
         is_locked = security_policy_instance.is_locked # feature that bypasses the session validation and direclty prompts for password each time.
-        print(password_to_check , file_folder_id)
+        cookie_key = ""
+        max_age = 0
 
+        print(password_to_check , file_folder_id)
+        print("locking status ->" , is_locked)
         if check_password(password_to_check , security_policy_instance.encypted_password or ""):
             print("inside the password check")
             #Generating the sesssion token key which will be valid for 5 minutes.
@@ -2523,6 +2498,7 @@ def check_password_return_session_token(request):
                     defaults={'session_token': hashed_security_token_string, 'expiry_time': timezone.now() + timedelta(minutes=security_policy_instance.session_duration), 'created_at_or_updated_at': timezone.now()},
                     create_defaults={'session_user' : user , 'file_folder_instance' : file_folder_instance, 'session_token': hashed_security_token_string, 'created_at_or_updated_at': timezone.now(), 'expiry_time': timezone.now() + timedelta(minutes=security_policy_instance.session_duration)}
                 )
+                
 
             responce_data = {
                 'status_code' : 5000,
@@ -2532,13 +2508,23 @@ def check_password_return_session_token(request):
 
             responce =  Response(responce_data)
             print(f'file_access_{file_folder_id}')
+            if is_locked:
+                print("inside the locked condition")
+                cookie_key = f'short_time_access_{file_folder_id}'
+                max_age = 3600
+            else:
+                print("outside the is_locked condition")
+                cookie_key = f'file_access_{file_folder_id}'
+                max_age = 3600
+                
+            print(cookie_key)
             responce.set_cookie(
-                key=f'short_time_access_{file_folder_id}' if is_locked else f'file_access_{file_folder_id}', 
+                key=cookie_key , 
                 value=random_security_token_string,
                 httponly=True,           # Prevents JS access (XSS protection)
                 secure=False,             # Ensures it's only sent over HTTPS (currenlty I am in local development so false to allow http request)
                 samesite='Lax',          # CSRF protection
-                max_age=10 if is_locked else 3600,            # 1 hour in seconds
+                max_age=max_age,            # 1 hour in seconds
                 # domain="localhost"     # Optional: specify if needed for local dev
                 path='/'
             )

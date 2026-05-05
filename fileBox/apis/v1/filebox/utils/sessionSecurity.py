@@ -37,6 +37,7 @@ def verify_session(view_func):
                 } 
                 
                 return Response(responce_data) 
+            kwargs['user'] = user
             
             raw_id = request.query_params.get('fileFolderID') or request.query_params.get('parentFolderID')
 
@@ -63,11 +64,9 @@ def verify_session(view_func):
             
             security_policy = ResourceSecurityPolicies.objects.filter(file_folder_instance__pk=file_folder_id).first()
 
-            if security_policy:
-                kwargs['user'] = user
+            if security_policy:           
                 kwargs['file_folder'] = security_policy.file_folder_instance
             else:
-                kwargs['user'] = user
                 kwargs['file_folder'] = FileFolderModel.objects.filter(pk=file_folder_id).first()
 
 
