@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.utils import timezone
 from django.contrib.auth.hashers import check_password
-from Backend.models import ResourceSecurityPolicies, SecuritySession, FileFolderModel, ClerkUserProfile
+from Backend.models import ResourceSecurityPolicies, SecuritySession, FileFolderModel, ClerkUserProfile, ShareLink
 
 from clerk_backend_api import Clerk
 from clerk_backend_api.security import authenticate_request
@@ -28,7 +28,6 @@ def verify_session(view_func):
             request_payload = request_state.payload 
             user_id = request_payload['sub'] 
             user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first() 
-
             if user is None: 
                 responce_data = { 
                     "status_code" : 4001, 
@@ -37,10 +36,13 @@ def verify_session(view_func):
                 } 
                 
                 return Response(responce_data) 
-            
-            raw_id = request.query_params.get('fileFolderID') or request.query_params.get('parentFolderID')
+            kwargs['user'] = user
 
-            if not raw_id:
+            is_shared_instance = None
+            raw_id = request.query_params.get('fileFolderID') or request.query_params.get('parentFolderID') or request.query_params.get('parentID') 
+            sharable_uuid = request.query_params.get("sharableUUID")
+            
+            if not raw_id and not sharable_uuid:
                 # If neither is present, it might be a root request or an error
                 # You decide if you want to allow this or return an error
                 return view_func(request, *args, **kwargs)
@@ -48,26 +50,32 @@ def verify_session(view_func):
 
             file_folder_id = raw_id  # this setup is to include both the files and folders...
 
-
             ## checking for bypassing the actual ids and decoding the hashed ids if the shared resource is being tried to access.
             if file_folder_id:
                 if file_folder_id.isdigit():
                     file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
                 else:
                     file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
-            
+
+
             print("Decoded File/Folder ID:", file_folder_id)  # Debugging statement to check the decoded ID
             print("Raw File/Folder ID from query params:", raw_id)  # Debugging statement to check the raw ID from query params
             print("User ID:", user_id)  # Debugging statement to check the user ID from Clerk payload
             print("User from DB:", user.clerk_user_name)  # Debugging statement to check the user retrieved from the database
             
-            security_policy = ResourceSecurityPolicies.objects.filter(file_folder_instance__pk=file_folder_id).first()
+            security_policy = None
 
-            if security_policy:
-                kwargs['user'] = user
+            if sharable_uuid:
+                share_link_instance = ShareLink.objects.select_related('file_folder_instance').get(shareable_id = sharable_uuid) #collecting the instance based on the ID given in the URL.Select_related is used to reduce the number of queries to the database by fetching the related file_folder_instance in the same query as the ShareLink instance.  
+                security_policy = ResourceSecurityPolicies.objects.filter(file_folder_instance__pk=share_link_instance.file_folder_instance.pk).first()
+                print(security_policy)
+                is_shared_instance = True
+            else:
+                security_policy = ResourceSecurityPolicies.objects.filter(file_folder_instance__pk=file_folder_id).first()
+
+            if security_policy:           
                 kwargs['file_folder'] = security_policy.file_folder_instance
             else:
-                kwargs['user'] = user
                 kwargs['file_folder'] = FileFolderModel.objects.filter(pk=file_folder_id).first()
 
 
@@ -75,7 +83,7 @@ def verify_session(view_func):
                 return view_func(request, *args, **kwargs)  #if the security policy instance is not found for the file/folder instance then we will just call the view function without any security checks as there are no security policies implemented for that file/folder instance.
 
             if security_policy.is_locked: #if the author is set the resource locked , each time they access the resource have to provide the password
-                temp_short_access_cokkie = request.COOKIES.get(f'short_time_access_{file_folder_id}')
+                temp_short_access_cokkie = request.COOKIES.get(f'short_time_access_{file_folder_id}') if not is_shared_instance else request.COOKIES.get(f'short_time_access_{sharable_uuid}')
                 if temp_short_access_cokkie:
                     return view_func(request , *args, **kwargs)  #grand access to the resource
                 else:
@@ -115,7 +123,7 @@ def verify_session(view_func):
 
             security_pass_key = security_session_instance.session_token  #pass key stored in the db (hashed one)
             print(f'file_access_{file_folder_id}')
-            token_from_frontend = request.COOKIES.get(f'file_access_{file_folder_id}') #pass key send from the frontend (raw one) 
+            token_from_frontend = request.COOKIES.get(f'file_access_{file_folder_id}') if not is_shared_instance else request.COOKIES.get(f'file_access_{sharable_uuid}') #pass key send from the frontend (raw one) 
             print(request.COOKIES)
             print("Token from frontend:", token_from_frontend)  # Debugging statement to check the token from the frontend
             if not token_from_frontend or not security_pass_key or not check_password(token_from_frontend, security_pass_key) or security_session_instance.expiry_time < timezone.now():  #checking if the pass key is valid by checking if its there in the db and also checking if the token from the frontend matches with the decrypted token from the db and also checking if the token is expired or not by comparing the expiry time with the current time.
