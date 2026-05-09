@@ -1418,8 +1418,9 @@ def generate_share_link(request):
         return Response(responce_data)
 
 
-@api_view(['POST'])
-def access_shared_file_folder(request):
+@api_view(['GET'])
+@verify_session
+def access_shared_file_folder(request , user=None , file_folder=None):
     request_state = clerk_SDK.authenticate_request(
         request,
         AuthenticateRequestOptions(
@@ -1457,6 +1458,8 @@ def access_shared_file_folder(request):
             }
              return Response(responce_data) 
         
+        print("entered............................")
+
         #trackers used to track the access control
         has_access = False
         permission_data = None
@@ -2463,14 +2466,22 @@ def check_password_return_session_token(request):
         
         password_to_check = request.data.get('password')  #getting the password from the frontend to check with the encrypted password in the db
         file_folder_id = request.query_params.get('fileFolderID') #getting the file folder ID to check the password for that specific file folder instance
-        
+        file_folder_instance = None
+
         if file_folder_id:
             if file_folder_id.isdigit():
                 file_folder_id = int(file_folder_id)  # Convert to integer if it's a digit
+                file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() #fetching the file folder instance from the db based on the provided ID
             else:
-                file_folder_id = hash_ID.decode_id(file_folder_id) #used to decode the hashed ID if the shared resource is been tried 
-            
-        file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first() #fetching the file folder instance from the db based on the provided ID
+                # there is change for a sub file inside the sharable instance , so the sub files are hashed IDs -> we need to check for decoding hash  if yes -> procide with initializing the filefolder if NO -> it will be sharable instance since sharable ID is not hashed its a UUID
+                # in sharable system the share instance id is provided -> fetch the share Instance , get the filefolder instance
+                file_folder_id = hash_ID.decode_id(file_folder_id)
+                if file_folder_id:
+                    file_folder_instance = FileFolderModel.objects.filter(pk=file_folder_id).first()
+                else:
+                    sharable_instance = ShareLink.objects.select_related(file_folder_instance).filter(shareable_id=file_folder_id).first()
+                    file_folder_instance = sharable_instance.file_folder_instance if sharable_instance else None #fetching the file folder instance from the db based on the provided ID
+
         security_policy_instance = ResourceSecurityPolicies.objects.filter(file_folder_instance=file_folder_instance).first() #fetching the security policy instance for that file folder instance to get the encrypted password to check with the password provided from the frontend        
         if not file_folder_instance or not security_policy_instance:
             responce_data = {

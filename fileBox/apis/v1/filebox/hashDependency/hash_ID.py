@@ -10,6 +10,7 @@ def encode_id(id):
 
 def decode_id(id):
     if id is None:
+        print("id is none")
         return None
     decoded = hashid.decode(id)
     return decoded[0] if decoded else None
