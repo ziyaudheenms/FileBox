@@ -869,6 +869,7 @@ def getStorageDetails(request):
         request_payload = request_state.payload
         user_id = request_payload['sub']
 
+        print(user_id)
         user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
         if not user:
             responce_data = {
