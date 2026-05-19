@@ -7,9 +7,6 @@ import shutil
 from sqlite3 import Cursor
 from sre_compile import isstring
 from sys import version
-from tkinter import NO, TRUE
-from attr import has
-from click import File
 from django.contrib.auth.hashers import make_password, check_password
 from django.db.models import F
 from django.core.exceptions import ValidationError

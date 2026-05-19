@@ -4,4 +4,36 @@ services:
       context: .
     ports:
       - 8000:8000
+    volumes:
+      #this is currently used to bind the volume so that to reflect the changes in the local code quickly in the container.
+      - .:/app
+    env_file:
+      - ./.env
+    depends_on:
+      - redis
+  
+  redis:
+    image: redis:8.8-m03-alpine3.23
+    restart: always
+    ports:
+      - 6379:6379
+    volumes:
+      - C:/Users/HP/OneDrive/Desktop/redis-conf/redis.conf:/usr/local/etc/redis/redis.conf
+      # Mounts your database storage directory so data isn't lost on restart
+      - C:/Users/HP/OneDrive/Desktop/redis-data:/data
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  celery_worker:
+    build:
+      # this celery instance is not a pre-build image , it runs on the python environment we have initialised
+      context: .
+    restart: always
+    command: celery -A fileBox worker --loglevel=INFO
+    volumes:
+      - .:/app
+    env_file:
+      - ./.env
+    depends_on:
+      - redis
+
 

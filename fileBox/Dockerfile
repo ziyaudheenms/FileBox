@@ -37,4 +37,4 @@ USER app
 EXPOSE 8000
 
 # 12. Run using 'python -m gunicorn' to safely bypass non-root PATH restrictions
-CMD ["python", "-m", "gunicorn", "fileBox.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["python", "-m", "daphne", "-b", "0.0.0.0", "-p", "8000", "fileBox.asgi:application"]
