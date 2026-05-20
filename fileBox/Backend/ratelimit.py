@@ -19,7 +19,7 @@ def get_user_tier_based_rate_limit(group : str, request : HttpRequest):
         request_state = clerk_SDK.authenticate_request(
             request,
             AuthenticateRequestOptions(
-                authorized_parties=["http://localhost:3000"]
+                authorized_parties=[os.getenv('FRONTEND_DOMAIN') or 'http://localhost:3000' ]
             )
         )
     except Exception as e:
@@ -56,7 +56,7 @@ def get_user_role_or_ip(group : str, request : HttpRequest):
         request_state = clerk_SDK.authenticate_request(
             request,
             AuthenticateRequestOptions(
-                authorized_parties=["http://localhost:3000"]
+                authorized_parties=[os.getenv('FRONTEND_DOMAIN') or 'http://localhost:3000' ]
             )
         )
     except Exception as e:
@@ -85,7 +85,7 @@ def get_user_tier_based_rate_limit_for_chunking_of_files(group : str, request : 
         request_state = clerk_SDK.authenticate_request(
             request,
             AuthenticateRequestOptions(
-                authorized_parties=["http://localhost:3000"]
+                authorized_parties=[os.getenv('FRONTEND_DOMAIN') or 'http://localhost:3000' ]
             )
         )
     except Exception as e:

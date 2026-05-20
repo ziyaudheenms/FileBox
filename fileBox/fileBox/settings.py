@@ -89,7 +89,7 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("127.0.0.1", 6379, 0)],
+            "hosts": [("redis", 6379, 0)],  #swapped localhost to redis because I am running containers and and redis is running in a saperate contaner and  therefore redis
         },
     },
 }
@@ -98,13 +98,17 @@ CHANNEL_LAYERS = {
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://127.0.0.1:6379/1',
+        'LOCATION': 'redis://redis:6379/1',   #swapped localhost with redis for connecting with dockerized redis instance
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
         'TIMEOUT' : None,
     }
 }
+
+# 4. Smart Ratelimit Backend Configuration
+RATELIMIT_DEFAULT_BACKEND = 'redis'
+RATELIMIT_REDIS_URL = 'redis://redis:6379/0'
 
 
 # Database
@@ -132,7 +136,7 @@ DATABASES = {
 # }
 
 
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'  # Or your Redis URL
+CELERY_BROKER_URL = 'redis://redis:6379/0'  # Or your Redis URL (localhost os swapped with redis for connecting with the redis container which is been created)
 CELERY_RESULT_BACKEND = 'django-db'  # Using Django database as result backend
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
