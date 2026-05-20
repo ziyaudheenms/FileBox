@@ -36,5 +36,8 @@ USER app
 # 11. Tell Docker your Django application will listen on port 8000
 EXPOSE 8000
 
-# 12. Run using 'python -m gunicorn' to safely bypass non-root PATH restrictions
+# #12. Collect all the static files used in the repo using whitenoise
+RUN python manage.py collectstatic --noinput
+
+# 13. Run using 'python -m gunicorn' to safely bypass non-root PATH restrictions
 CMD ["python", "-m", "daphne", "-b", "0.0.0.0", "-p", "8000", "fileBox.asgi:application"]

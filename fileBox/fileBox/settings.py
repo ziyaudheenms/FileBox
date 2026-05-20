@@ -43,11 +43,11 @@ INSTALLED_APPS = [
     'channels',
     'Backend',
     'django_celery_results',
-    'django_smart_ratelimit',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -55,16 +55,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'django_smart_ratelimit.middleware.RateLimitMiddleware'
 ]
-
-RATELIMIT_MIDDLEWARE = {
-    'DEFAULT_RATE': '1000/h',
-    'RATE_LIMITS': {
-        '/api/auth/': '10/m',
-        '/api/': '500/h',
-    }
-}
 
 ROOT_URLCONF = 'fileBox.urls'
 
@@ -103,18 +94,14 @@ CACHES = {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
         'TIMEOUT' : None,
-    }
+    },
 }
-
-# 4. Smart Ratelimit Backend Configuration
-RATELIMIT_DEFAULT_BACKEND = 'redis'
-RATELIMIT_REDIS_URL = 'redis://redis:6379/0'
 
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-tmpPostgres = urlparse(os.getenv("DATABASE_URL"))
+tmpPostgres = urlparse(os.getenv("DATABASE_URL" , "postgres://dummy:dummy@localhost:5432/dummy"))    #during the image build face , docker have no access to .env therefore it return None here and crashes  for solving that error dummy is included.
 
 DATABASES = {
     'default': {
@@ -188,7 +175,11 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
+# Optional: Enable compression and caching
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
