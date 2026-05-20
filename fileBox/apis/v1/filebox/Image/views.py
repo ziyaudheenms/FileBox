@@ -39,9 +39,9 @@ from imagekitio import ImageKit
 #importing the queue tasks for Celery to work on with
 from Backend.tasks import delete_image_from_imagekit, implement_copy_of_records, upload_image_to_imagekit
 
-#importing the ratelimiting fuctions
-from django_smart_ratelimit import rate_limit
-from django_ratelimit.decorators import ratelimit
+# #importing the ratelimiting fuctions
+# from django_smart_ratelimit import rate_limit
+# from django_ratelimit.decorators import ratelimit
 
 from Backend.models import ClerkUserStorage, FileFolderModel, ClerkUserProfile, FileFolderPermission, ResourceSecurityPolicies, SecuritySession, ShareLink # importing the models from the registered app
 from Backend.ratelimit import get_user_tier_based_rate_limit , get_user_role_or_ip, get_user_tier_based_rate_limit_for_chunking_of_files
@@ -56,11 +56,11 @@ clerk_SDK = Clerk(bearer_auth=os.getenv("CLERK_API_KEY"))
 redis_cache: RedisCache = cache # type: ignore
 
 @api_view(['POST'])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-    })  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+#     })  # used for implementing token bucket algorithm for rate limiting
 def uploadImage(request):
     # First Lets authenticate the request using clerk
     request_state = clerk_SDK.authenticate_request(
@@ -208,11 +208,11 @@ def uploadImage(request):
 
 
 @api_view(['POST'])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit_for_chunking_of_files(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-    })  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit_for_chunking_of_files(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+#     })  # used for implementing token bucket algorithm for rate limiting
 def ChunkImage(request):
     #collecting all the important details.
     chunk = request.data["chunk"]
@@ -240,11 +240,11 @@ def ChunkImage(request):
 
 
 @api_view(["POST"])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-    })  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+#     })  # used for implementing token bucket algorithm for rate limiting
 def JoinChunks(request):
     request_state = clerk_SDK.authenticate_request(
         request,
@@ -355,11 +355,11 @@ def JoinChunks(request):
 
 
 @api_view(['POST'])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-    })  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+#     })  # used for implementing token bucket algorithm for rate limiting
 def createFolder(request):
     # First Lets authenticate the request using clerk
     request_state = clerk_SDK.authenticate_request(
@@ -476,11 +476,11 @@ def createFolder(request):
         return Response(responce_data)
 
 @api_view(["GET"])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-})  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+# })  # used for implementing token bucket algorithm for rate limiting
 def isTrash(request):
     # First Lets authenticate the request using clerk
     request_state = clerk_SDK.authenticate_request(
@@ -542,11 +542,11 @@ def isTrash(request):
 
 
 @api_view(["GET"])
-@ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
-@rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
-        'bucket_size': 200,  # Allow bursts up to 200 requests
-        'refill_rate': 2.0,  # Refill at 2 tokens per second
-    })  # used for implementing token bucket algorithm for rate limiting
+# @ratelimit(key=lambda g, request: get_user_role_or_ip(g, request), rate=lambda g, request: get_user_tier_based_rate_limit(g, request) , block=True)  #used for getting the rate limiting based on the teir of the user
+# @rate_limit(key=lambda g, request: get_user_role_or_ip(g, request), rate='100/m', block=True, algorithm='token_bucket',algorithm_config={
+#         'bucket_size': 200,  # Allow bursts up to 200 requests
+#         'refill_rate': 2.0,  # Refill at 2 tokens per second
+#     })  # used for implementing token bucket algorithm for rate limiting
 def isFavorite(request):
     # First Lets authenticate the request using clerk
     request_state = clerk_SDK.authenticate_request(
@@ -602,7 +602,7 @@ def isFavorite(request):
     
 
 @api_view(['GET'])
-@rate_limit(key='ip', rate='1/m')
+# @rate_limit(key='ip', rate='1/m')
 def testFunction(request):
     responce_data = {
         "status_code" : 5000,

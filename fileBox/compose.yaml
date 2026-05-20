@@ -4,9 +4,9 @@ services:
       context: .
     ports:
       - 8000:8000
-    volumes:
-      #this is currently used to bind the volume so that to reflect the changes in the local code quickly in the container.
-      - .:/app
+    # volumes:
+    #   #this is currently used to bind the volume so that to reflect the changes in the local code quickly in the container.
+    #   - .:/app
     env_file:
       - ./.env
     depends_on:
