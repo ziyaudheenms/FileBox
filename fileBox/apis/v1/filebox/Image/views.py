@@ -614,83 +614,94 @@ def testFunction(request):
 
 
 @api_view(['GET'])
-@verify_session   #custom decorator for session_authentication.
-def getAllFileFolders(request, user=None , file_folder=None):
+@verify_session   # custom decorator for session_authentication.
+def getAllFileFolders(request, user=None, file_folder=None):
     
     pagination_cursor = request.query_params.get("cursor")
-    category_type = request.query_params.get("category")   #allowed_types = [IMAGE, DOCUMENT, VIDEO, OTHERS]
-    if category_type and not category_type in ["image", "document", "video", "others"]:
-        responce_data = {
-            "status_code" : 5002,
-            "message" : "Invalid category type",
-            "data" : ""
-        }
-        return Response(responce_data)
+    category_type = request.query_params.get("category")  # allowed_types = [image, document, video, others]
     
-    cache_key = f'{category_type}_file_folder_list_{user.clerk_user_id}_{file_folder}_{pagination_cursor}' if category_type else f'file_folder_list_{user.clerk_user_id}_{file_folder}_{pagination_cursor}'  # setting the Cache Key for the specific user and parent folder ID and pagination cursor to look up in the cache.
-    print('Generated Cache Key', cache_key)
-
-    #looking up in cache for the required data.
-    if cache.has_key(cache_key , version=2):
-        print('Fetching from cache version 2', cache_key)
-        return Response(cache.get(cache_key , version=2))
+    if category_type and category_type not in ["image", "document", "video", "others"]:
+        return Response({
+            "status_code": 5002,
+            "message": "Invalid category type",
+            "data": ""
+        })
     
-    parentFolder = file_folder  #parent folder is been passed from the verify_session decorator.......
+    # Generate Cache Key (handles missing parentFolder cleanly)
+    folder_id = file_folder.pk if file_folder else None
+    cache_key = f"{category_type}_file_folder_list_{user.clerk_user_id}_{folder_id}_{pagination_cursor}" if category_type else f"file_folder_list_{user.clerk_user_id}_{folder_id}_{pagination_cursor}"
+    
+    # Look up in cache
+    if cache.has_key(cache_key, version=2):
+        return Response(cache.get(cache_key, version=2))
+    
+    parentFolder = file_folder
     if parentFolder is not None:
-        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False , parentFolder = file_folder.pk ).order_by('-updated_at')
+        all_files_folders_instance = FileFolderModel.objects.filter(is_trash=False, parentFolder=parentFolder.pk).order_by('-updated_at')
     else:
-        all_files_folders_instance = FileFolderModel.objects.filter(is_trash = False, author = user, type_of_file_folder=category_type).order_by('-updated_at') if category_type else FileFolderModel.objects.filter(is_trash = False , is_root = True , author = user).order_by('-updated_at')
+        if category_type:
+            all_files_folders_instance = FileFolderModel.objects.filter(is_trash=False, author=user, type_of_file_folder=category_type).order_by('-updated_at')
+        else:
+            all_files_folders_instance = FileFolderModel.objects.filter(is_trash=False, is_root=True, author=user).order_by('-updated_at')
 
+    # Handle Empty Queryset
     if not all_files_folders_instance.exists():
-        responce_data = {
-            "status_code" : 5002,
-            "message" : "No Files/Folders Found",
-            "data" : ""
-        }
-        return Response(responce_data)
+        return Response({
+            "status_code": 5002,
+            "message": "No Files/Folders Found",
+            "data": []
+        })
     
-    
-    ids =  (parentFolder.path.split('/') if parentFolder.path else []) if parentFolder else []
-    ids.append(parentFolder.pk) 
-    folderNames = FileFolderModel.objects.filter(pk__in =ids).values_list('name', flat=True)
-    pathname =  '/'.join(folderNames)
+    # Safe Breadcrumbs ID and Name Extraction
+    if parentFolder:
+        ids = parentFolder.path.split('/') if parentFolder.path else []
+        ids.append(parentFolder.pk)
+    else:
+        ids = []
 
-    print(pathname , ids , "-> used for breadcrumbs")
+    if ids:
+        # Maintain original path order by retrieving values in sequence
+        folder_map = dict(FileFolderModel.objects.filter(pk__in=ids).values_list('pk', 'name'))
+        folder_names = [folder_map[int(i)] for i in ids if int(i) in folder_map]
+        pathname = '/'.join(folder_names)
+        ids_str = '/'.join(str(i) for i in ids)
+    else:
+        pathname = ''
+        ids_str = ''
+
+    breadcrumb_details = {
+        "names": pathname,
+        "ids": ids_str
+    }
 
     paginated_files_folders = FileFolderCursorBasedPagination()
-    paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance , request)
+    paginated_instance = paginated_files_folders.paginate_queryset(all_files_folders_instance, request)
 
-    context = {
-        "request" : request
-    }
+    context = {"request": request}
 
+    # Handle Paginated Path
     if paginated_instance is not None:
-        serialized_files_and_folders = FileFolderSerializer(paginated_instance, many = True , context = context)
-        result = paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
-                "names" : pathname,
-                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-            }).data
-        cache.set(cache_key, result ,version=2)  #setting the required data in cache against the cache key for future lookups.
-        print("setting the cached value")
-        return paginated_files_folders.get_paginated_response(serialized_files_and_folders.data , breadcrumb_details= {
-                "names" : pathname,
-                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-            })
-    
-    serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many = True , context = context)
-    print(serialized_files_and_folders.data , cache_key , "OUTSIDE THE PAGINATION CLASS.....")
-    responce_data = {
-            "status_code" : 5000,
-            "message" : "Folder Created Successfully",
-            "data" : serialized_files_and_folders.data,
-            "breadcrumbs" : {
-                "names" : pathname,
-                "ids" : ("/".join(ids) if ids else '') if parentFolder else '' 
-            }
+        serialized_files_and_folders = FileFolderSerializer(paginated_instance, many=True, context=context)
+        paginated_response = paginated_files_folders.get_paginated_response(
+            serialized_files_and_folders.data, 
+            breadcrumb_details=breadcrumb_details
+        )
+        
+        # Cache and return response data
+        cache.set(cache_key, paginated_response.data, version=2)
+        return paginated_response
+
+    # Handle Non-Paginated Path
+    serialized_files_and_folders = FileFolderSerializer(all_files_folders_instance, many=True, context=context)
+    response_data = {
+        "status_code": 5000,
+        "message": "Files and folders retrieved successfully",
+        "data": serialized_files_and_folders.data,
+        "breadcrumbs": breadcrumb_details
     }
     
-    cache.set(cache_key, responce_data)
-    return Response(responce_data)
+    cache.set(cache_key, response_data, version=2)
+    return Response(response_data)
   
 
 @api_view(['GET'])
