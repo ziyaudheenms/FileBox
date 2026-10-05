@@ -10,6 +10,7 @@ from clerk_backend_api.security import authenticate_request
 from clerk_backend_api.security.types import AuthenticateRequestOptions
 
 from Backend.models import ClerkUserProfile , ClerkUserStorage, UserSecurityProfile
+from .serializers import UserSecuritySessionSerializers
 
 load_dotenv()
 
@@ -129,6 +130,60 @@ def create_clerk_user(request):
     })
 
 
+@api_view(['GET'])
+def retrieve_crypto_sessions(request):
+    """
+        This function through we have to send the crypto sessions encrypted ones that which we have saved 
+        in the DB to the respected users who are verified through the clerk SDK
+    
+    """
+    request_state = clerk_SDK.authenticate_request(
+            request,
+            AuthenticateRequestOptions(
+                authorized_parties=["http://localhost:3000"]
+            )
+        )
+    
+    if not request_state.is_signed_in:
+        return Response({
+            "status_code": 5001,
+            "message": "User Can't able to sync. Authentication Failed",
+            "data": ""
+        }, status=401)
+
+    request_payload = request_state.payload
+    user_id = request_payload['sub']  # Clerk User ID
+
+    user = ClerkUserProfile.objects.filter(clerk_user_id = user_id).first()
+    if not user:
+        return Response({
+            "status_code" : 4001,
+            "message" : "User Record Not Found",
+            "data" : ""               
+        })
+
+    #Now we want to fetch the user security record and send it back to the client.
+
+    user_security_instance = UserSecurityProfile.objects.filter(user = user).first()
+    if not user_security_instance:
+        return Response({
+            "status_code" : 5002,
+            "message" : "Opps !! We cant fing the user security crypto record",
+            "data" : ""               
+        })
+
+    context = {
+        "request" : request
+    }
+
+    serialized_security_sessions = UserSecuritySessionSerializers(instance = user_security_instance , context = context)
+
+    return Response({
+        "status_code" : 5000,
+        "message" : "Stay Protected With Our Encryption",
+        "data" : serialized_security_sessions.data               
+    })
+    
 
 
 

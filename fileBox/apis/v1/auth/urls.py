@@ -5,4 +5,5 @@ from . import views
 urlpatterns = [
     path('createUser/', views.create_clerk_user),
     path('updateUser/', views.update_clerk_user),
+    path('security-sessions/', views.retrieve_crypto_sessions),
 ]
