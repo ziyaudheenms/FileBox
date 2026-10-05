@@ -8,6 +8,8 @@ from django.utils import timezone
 
 from django.contrib.postgres.search import SearchVectorField
 from django.contrib.postgres.indexes import GinIndex
+
+
 class ClerkUserProfile(models.Model):
 
     TIER_OPTIONS = [
@@ -26,7 +28,24 @@ class ClerkUserProfile(models.Model):
     def __str__(self) -> str:
         return self.clerk_user_name
 
+
+class UserSecurityProfile(models.Model):
+    # Using OneToOneField since each ClerkUserProfile has exactly one crypto profile
+    user = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="security_profile")
     
+    # Key Derivation
+    key_encryption_key_salt = models.TextField(null=False) # Salt used for Argon2 (crypto_pwhash) to derive the KEK
+    
+    # Asymmetric Keypair
+    user_public_key = models.TextField(null=False) # Public key for sharing/encryption
+    user_encrypted_private_key = models.TextField(null=False) # Encrypted private key ciphertext
+    user_encrypted_private_key_nonce = models.TextField(null=False) # Nonce used for the encrypted private key
+    
+    # Symmetric Master Key
+    user_encrypted_master_key = models.TextField(null=False) # Encrypted master key ciphertext
+    user_encrypted_master_key_nonce = models.TextField(null=False) # Nonce used for the encrypted master key
+
+
 
 class FileFolderModel(models.Model):
     STATUS_CHOICES = [
@@ -72,8 +91,6 @@ class FileFolderModel(models.Model):
             GinIndex(fields=['search_vector'] , name='file_search_vector_idx')
         ]
 
-
-
 #DataBase model to track the storage of each user  (Will be used in future for tracking the storage limits of each user based on their tier) (also will conduct Audit in a periodic manner to update the used storage of each user to verify if the record details are correct)
 class ClerkUserStorage(models.Model):
     author = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="storage_stats")
@@ -107,8 +124,6 @@ class FileFolderPermission(models.Model):
     def __str__(self):
         return f"{self.user_id.clerk_user_name} - {self.permission_type} - {self.fileFolder_Instance_id.name}"
     
-
-
 class ShareLink(models.Model):
     VIEW_CHOICES = [
         ('PUBLIC', 'Public'), # can only view the fileFolder or instances like that.
@@ -157,7 +172,6 @@ class ResourceSecurityPolicies(models.Model):
     session_duration = models.IntegerField(default=1) #used to set the time interval for opening the file since the password is given. (duration is given in minutes.)
     def __str__(self):
         return f"Security Policies for {self.file_folder_instance.name}"
-
 
 class SecuritySession(models.Model):
     session_user = models.ForeignKey(ClerkUserProfile, on_delete=models.CASCADE, related_name="security_user_session")
