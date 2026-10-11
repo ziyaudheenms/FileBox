@@ -1,3 +1,4 @@
+from pyexpat import model
 from typing import Any
 import uuid
 
@@ -67,8 +68,9 @@ class FileFolderModel(models.Model):
     is_root = models.BooleanField(default=True)  #used to track whether the Folder is a root folder or a sub folder
     parentFolder = models.ForeignKey("self" , on_delete=models.CASCADE, null=True , blank=True) #if the data is in the root structure , we dont have a parent folder other wise store the id of the parent
     path = models.TextField(null=True, blank=True, default=None , db_index=True) #used to track the parent structure  (will be null if is_root is True)
-
-
+    encrypted_collection_key = models.TextField(null=True, blank=True, default=None)
+    collection_key_nonce = models.TextField(null=True, blank=True, default=None)
+    
     #if the data is a file we need all this data
     file_url = models.URLField(null=True , blank=True) #if it's file we need the url of the data
     file_extension = models.TextField(null=True , blank=True) #if it's file we need the extension of the data

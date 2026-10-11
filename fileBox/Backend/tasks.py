@@ -29,7 +29,7 @@ imagekit = ImageKit(
 )
 
 @shared_task(bind=True, max_retries=3)
-def upload_image_to_imagekit(self,filename,filebase64,file_modelID,delete_cache_key,shared_instance_owner):
+def upload_image_to_imagekit(self,filename,filebase64,file_modelID,delete_cache_key= None,shared_instance_owner= None):
     try:
         print("Event Started to be uploaded")
         print(file_modelID)
