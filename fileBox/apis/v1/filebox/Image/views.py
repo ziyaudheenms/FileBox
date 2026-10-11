@@ -375,8 +375,12 @@ def createFolder(request):
 
         user = ClerkUserProfile.objects.get(clerk_user_id = user_id)  #getting the authenticated author who is creating the folder  
         folder_name_info = request.query_params.get("folderID") # parent folder ID
+        
         folder_name = request.data["name"]
+        encrypted_collection_key = request.data["encryptedCollectionKey"]
+        collection_key_nonce = request.data["collectionKeyNonce"]
 
+        print(folder_name, encrypted_collection_key , "these are the keysssssssss")
         sharable_UUID = request.query_params.get("sharableUUID")
         parent_hash = request.query_params.get("parentHash")
 
@@ -448,7 +452,9 @@ def createFolder(request):
             is_root = True if folder == None else False,
             path = path_to_be_appended,
             parentFolder = folder,
-            upload_status = "UPLOADED"
+            upload_status = "UPLOADED",
+            encrypted_collection_key = encrypted_collection_key,
+            collection_key_nonce = collection_key_nonce
         )
         
         responce_data = {
