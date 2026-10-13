@@ -76,6 +76,8 @@ def uploadImage(request):
         folder_name_info = request.query_params.get("folderID") #if the image is stored inside any folder , we can get the ID of the folder
         file = request.data['image']
 
+
+
         sharable_UUID = request.query_params.get("sharableUUID")
         parent_hash = request.query_params.get("parentHash")
 
@@ -257,12 +259,17 @@ def JoinChunks(request):
         user_id = request_payload['sub']
 
         chunk_file_ID = request.data["fileId"]
-        full_file_name = request.data["fileName"]
+        # full_file_name = request.data["fileName"]
         file_size = request.data["fileSize"]
-        file_extenstion = request.data["fileExtenstion"]
+     
+        encryptedFileKey = request.data["encryptedFileKey"]
+        fileKeyNonce = request.data["fileKeyNonce"]
+        encryptedFileMetadata = request.data["encryptedFileMetadata"]
+        fileMetadataNonce = request.data["fileMetadataNonce"]
+        encryptionHeader = request.data["encryptionHeader"]
         
-        # Separate name and extension
-        file_name = os.path.splitext(full_file_name)[0]
+        # Separatename and extension
+        # file_name = os.path.splitext(full_file_name)[0]
 
         temp_dir = os.path.join(settings.MEDIA_ROOT, 'temp_chunks', chunk_file_ID)
         if not os.path.exists(temp_dir):
@@ -309,22 +316,27 @@ def JoinChunks(request):
             else:
                 path_to_be_appended = f'{folder.pk}'
 
-        #creating the dummy record for reference in the frontend()
+        #creating the dummy record for reference in the frontend()  
+        # for the db conveniece for the time being now , storing the encryptedMetadata in the name, file_extenstion and description.
         file_instance = FileFolderModel.objects.create(
             author = user,
-            name = file_name,
+            name = encryptedFileMetadata,
             size = file_size,
             is_root = True if folder == None else False,
             path = path_to_be_appended,
             parentFolder = folder,
             file_url = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcTEpYntNMtkoBOau-IFwoq7wUlivz4VfNir9g&s",
-            file_extension = file_extenstion,
+            file_extension = encryptedFileMetadata,
+            encrypted_file_key = encryptedFileKey,
+            file_key_nonce = fileKeyNonce,
+            file_metadata_key_nonce = fileMetadataNonce,
+            encryption_header = encryptionHeader, # key cipher neede for the decryption of the stream of file content.
             celery_task_ID = 1
         )
         #task is queued to work at offload , so that to avoid the smooth fuctioning of api and workflow of the system.
         print(file_instance.pk)
         file_base64 = base64.b64encode(bytes_data).decode('utf-8')
-        queue_worker = upload_image_to_imagekit.delay(file_name , file_base64 , file_instance.pk)
+        queue_worker = upload_image_to_imagekit.delay(encryptedFileMetadata , file_base64 , file_instance.pk)
         file_instance.celery_task_ID = queue_worker.id
         file_instance.save()
 
@@ -467,10 +479,12 @@ def createFolder(request):
         redis_cache: RedisCache = cache # type: ignore
         if folder_instance.is_root:
             redis_cache.delete_pattern(f'*file_folder_list_{folder_instance.author.clerk_user_id}_*', version=2)
+            print("deleting the cache...........................")
         else:
             if delete_cache_key:
                 redis_cache.delete_pattern( delete_cache_key, version=2)
             redis_cache.delete_pattern(f'*file_folder_list_{folder.author.clerk_user_id}_{folder_instance.parentFolder.pk}*', version=2)
+            print("deleting the cache...........................")
 
         return Response(responce_data)
     else:
