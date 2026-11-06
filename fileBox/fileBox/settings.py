@@ -15,16 +15,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.getenv("SECRET_KEY") or ''
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv("DEBUG", "True").lower() == "true"
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['.onrender.com', 'localhost', '127.0.0.1']
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
-    "http://127.0.0.1:8000"
+    "http://127.0.0.1:8000",
+    "https://file-box-frontend.vercel.app"
 ]
 CSRF_TRUSTED_ORIGINS = [    
     "http://localhost:3000",
-    "http://127.0.0.1:8000"
+    "http://127.0.0.1:8000",
+    "https://file-box-frontend.vercel.app"
 ]
 CORS_ALLOW_CREDENTIALS = True
 
@@ -76,11 +78,17 @@ TEMPLATES = [
 
 ASGI_APPLICATION = 'fileBox.asgi.application'
 
+
+REDIS_CHANNEL_URL = os.getenv("REDIS_CHANNEL_URL", "redis://redis:6379/0")
+REDIS_CACHE_URL = os.getenv("REDIS_CACHE_URL", "redis://redis:6379/1")
+CELERY_BROKER_REDIS_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+
+
 CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [("redis", 6379, 0)],  #swapped localhost to redis because I am running containers and and redis is running in a saperate contaner and  therefore redis
+            "hosts": [REDIS_CHANNEL_URL],  # Uses /0 directly
         },
     },
 }
@@ -89,7 +97,7 @@ CHANNEL_LAYERS = {
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': 'redis://redis:6379/1',   #swapped localhost with redis for connecting with dockerized redis instance
+        'LOCATION': REDIS_CACHE_URL,   #swapped localhost with redis for connecting with dockerized redis instance
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
@@ -124,7 +132,7 @@ DATABASES = {
 # }
 
 
-CELERY_BROKER_URL = 'redis://redis:6379/0'  # Or your Redis URL (localhost os swapped with redis for connecting with the redis container which is been created)
+CELERY_BROKER_URL = CELERY_BROKER_REDIS_URL  # Or your Redis URL (localhost os swapped with redis for connecting with the redis container which is been created)
 CELERY_RESULT_BACKEND = 'django-db'  # Using Django database as result backend
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
